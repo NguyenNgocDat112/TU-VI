@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AstrologyForm } from './components/AstrologyForm';
 import { AstrologyChart } from './components/AstrologyChart';
@@ -17,12 +17,9 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '../components/ui/dialog';
 import { STAR_MEANINGS, MINOR_STAR_MEANINGS, TU_HOA_MEANINGS } from './lib/starMeanings';
-import { GoogleGenAI } from '@google/genai';
+import { getAICompletion } from './lib/aiService';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-
-// Initialize Gemini
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // --- Types & Constants ---
 type View = 'landing' | 'result';
@@ -57,7 +54,6 @@ const PALACE_DESCRIPTIONS: Record<string, string> = {
   'Phúc Đức': 'Nơi hé lộ về phúc phần, tổ tiên, tâm hồn và sự an lạc nội tâm suốt đời. Nó cho bạn biết rõ: phúc đức của bạn dày hay mỏng, tổ tiên có phù hộ hay không, và cách nào để tích đức, sống bình tĩnh và đạt được sự an lạc giữa đời trường. Mở cung Phúc Đức ngay để nắm bắt vận may từ tâm linh, kết nối với nguồn cội và đón nhận sự bảo hộ thầm lặng giúp cuộc đời bạn hanh thông, hạnh phúc trọn vẹn!'
 };
 
-// --- Main App Component ---
 export default function App() {
   const [view, setView] = useState<View>('landing');
   const [chartData, setChartData] = useState<any>(null);
@@ -72,9 +68,21 @@ export default function App() {
   const [palaceInterpretations, setPalaceInterpretations] = useState<Record<string, string>>({});
   const [isGeneratingTabAI, setIsGeneratingTabAI] = useState(false);
   const [interpretingPalace, setInterpretingPalace] = useState<string | null>(null);
+  const [notifications, setNotifications] = useState<{id: number, message: string, type: 'error' | 'info'}[]>([]);
 
-  const [decadalInterpretations, setDecadalInterpretations] = useState<Record<string, string>>({});
-  const [interpretingDecadal, setInterpretingDecadal] = useState<string | null>(null);
+  useEffect(() => {
+    const handleNotification = (event: any) => {
+      const { message, type } = event.detail;
+      const id = Date.now();
+      setNotifications(prev => [...prev, { id, message, type }]);
+      setTimeout(() => {
+        setNotifications(prev => prev.filter(n => n.id !== id));
+      }, 5000);
+    };
+
+    window.addEventListener('app-notification', handleNotification as EventListener);
+    return () => window.removeEventListener('app-notification', handleNotification as EventListener);
+  }, []);
 
   const PRIORITY_ORDER = ['Mệnh', 'Tài Bạch', 'Quan Lộc', 'Phu Thê', 'Thiên Di', 'Phúc Đức', 'Phụ Mẫu', 'Điền Trạch', 'Nô Bộc', 'Tật Ách', 'Tử Tức', 'Huynh Đệ'];
 
@@ -88,9 +96,11 @@ export default function App() {
       setActiveTab('Mệnh');
       setPalaceInterpretations({});
       setView('result');
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error calculating chart:", error);
-      // Optional: Add a toast notification or alert here if available in your UI library
+      window.dispatchEvent(new CustomEvent('app-notification', { 
+        detail: { message: `Lỗi tính toán lá số: ${error.message || 'Dữ liệu ngày giờ không hợp lệ.'}`, type: 'error' } 
+      }));
     }
   };
 
@@ -147,67 +157,169 @@ export default function App() {
 
       const allPalacesStr = chartData.palaces.map((p: any) => `${p.name} (Can ${p.stem}): ` + (p.majorStars.map((s: any) => s.name).join(', ') || 'VCD')).join(' | ');
 
-      const prompt = `Bạn là một bậc thầy tử vi lỗi lạc với chiều sâu hiểu biết về huyền học Đông Phương và có tư duy ứng dụng hiện đại. 
+      const year = new Date().getFullYear();
+      const isMenh = palace.name === 'Mệnh';
 
-BẮT ĐẦU LUẬN GIẢI BẰNG LỜI CHÀO MỞ ĐẦU THÂN THIỆN NHƯ: "Chào bạn, một hữu duyên khi được luận giải lá số của bạn..." hoặc "Chào bạn, một người mang trong mình dòng máu của..." tùy theo tính chất cung đang luận.
+      const prompt = `Bạn là chuyên gia Tử Vi Đẩu Số cao cấp. Nhiệm vụ của bạn là luận giải CHUYÊN SÂU DUY NHẤT một cung, dựa hoàn toàn vào dữ liệu được cung cấp.
 
-HÃY THỰC HIỆN LUẬN GIẢI CHI TIẾT, CHUYÊN SÂU CHO CUNG **${palace.name}**.
+---
 
-THÔNG TIN ĐƯƠNG SỐ:
-- Giới tính: ${birthInfo?.gender === 'male' ? 'Nam' : 'Nữ'}
-- Bản Mệnh: ${chartData.menhFull}
-- Cục: ${chartData.fiveElementsClass}
+## NGUYÊN TẮC CỐT LÕI
 
-BỐ CỤC SAO TẠI CUNG ${palace.name.toUpperCase()}:
-- Thiên Can: ${palace.stem} (Sử dụng để tính Phi Hóa)
-- Chính tinh: ${target.major}
-- Phụ tinh & Sát tinh hội tụ: ${target.all}
-- Tuần/Triệt: ${target.tuanTriet || 'Không bị Tuần Triệt'}
-- Vòng Tràng Sinh: ${target.trangSinh}
+* Chỉ tập trung vào cung đang luận, không lan sang toàn bộ lá số
+* Ưu tiên phân tích theo thứ tự:
+  1. Chính tinh
+  2. Bộ cách
+  3. Phi hóa
+  4. Tam hợp / xung chiếu
+  5. Phụ tinh
+* Không nói chung chung, không lặp ý
+* Cấm tuyệt đối: Không phân tích hoặc nhắc đến tương quan Mệnh - Cục (Cục sinh Mệnh, Mệnh khắc Cục...) nếu đây KHÔNG phải là cung Mệnh.
+* Không tự bịa dữ liệu (hallucinate)
+* Luôn gắn với hành vi thực tế
 
-TỔNG QUAN 12 CUNG (GỢI Ý TÍNH PHI HÓA):
-${allPalacesStr}
+---
 
-QUAN HỆ TAM PHƯƠNG TỨ CHÍNH & NHỊ HỢP:
-- Cung Xung Chiếu (${xungChieu.name}): ${xungChieu.all} | Tuần/Triệt: ${xungChieu.tuanTriet || 'Không bị'}
-- Cung Tam Hợp (${tamHop1.name}): ${tamHop1.all} | Tuần/Triệt: ${tamHop1.tuanTriet || 'Không bị'}
-- Cung Tam Hợp (${tamHop2.name}): ${tamHop2.all} | Tuần/Triệt: ${tamHop2.tuanTriet || 'Không bị'}
-- Cung Nhị Hợp (${nhiHop.name}): ${nhiHop.all} | Tuần/Triệt: ${nhiHop.tuanTriet || 'Không bị'}
+## DỮ LIỆU CUNG
 
-YÊU CẦU NỘI DUNG LUẬN GIẢI:
-Sử dụng tiêu đề Markdown (##) cho các mục lớn sau:
-## 1. TỔNG QUAN & BIỂU TƯỢNG
-## 2. PHÂN TÍCH TUẦN/TRIỆT & VÒNG TRÀNG SINH (NỘI BỘ & NGOẠI LAI)
-## 3. CHIẾT TỰ BỘ SAO & CÁCH CỤC PHỤ TINH (CÁT - HUNG - HÓA GIẢI)
-## 4. BÍ ẨN TỨ HÓA & PHI HÓA (NHÂN QUẢ GIAO THOA)
-## 5. VẬN THẾ NGOẠI LAI (TAM PHƯƠNG TỨ CHÍNH & NHỊ HỢP)
-## 6. PHÂN TÍCH NGŨ HÀNH & SỰ TƯƠNG TÁC
-## 7. GÓC NHÌN THỰC TẾ, NHÌN NHẬN BẢN THÂN & HƯỚNG ĐI CHIẾN LƯỢC
+* Giới tính: ${birthInfo?.gender === 'male' ? 'Nam' : 'Nữ'}
+* Âm Dương Thuận/Nghịch: ${chartData.yinYang} - ${chartData.yinYangHarmony}${isMenh ? `\n* Bản Mệnh: ${chartData.menhFull} | Cục: ${chartData.fiveElementsClass}` : ''}
+* Cung: ${palace.name} (tại ${palace.branch}, can ${palace.stem})
+* Tràng sinh: ${target.trangSinh}
+* Sao: ${target.all}
+* Tuần/Triệt: ${target.tuanTriet || 'Không có'}
 
-NỘI DUNG PHÂN TÍCH:
-- **Tứ Hóa & Phi Hóa:** TRỌNG TÂM: Đánh giá Tứ Hóa nòng cốt tại cung (Lộc, Quyền, Khoa, Kỵ nếu có). Dựa vào Thiên Can của cung đang xét, hãy tự tính xem cung này phi Hóa Lộc, Hóa Quyền, Hóa Khoa, Hóa Kỵ bay về những cung nào (có chính tinh tương ứng - cấu hình 12 cung đã cung cấp ở trên). Từ đó đưa ra quy luật Nhân Quả: Cung này tạo phúc cho cung nào (Phi Lộc/Khoa) và gây họa/mắc nợ cho cung nào (Phi Kỵ). Phân tích thật chi tiết!
-- **Tuần/Triệt & Tràng Sinh:** PHÂN TÍCH RÕ tác động của Tuần/Triệt tại bản cung. HƠN THẾ NỮA, NẾU bản cung không bị nhưng các cung Xung Chiếu, Tam Hợp, Nhị Hợp BỊ TUẦN/TRIỆT, bạn PHẢI phân tích sự sụt giảm năng lượng cứu giải, lực cản từ đối phương, hoặc sự bế tắc trong việc "mượn lực" từ các cung này. Đánh giá trạng thái Vòng Tràng Sinh (sinh, vượng, suy, tuyệt) ảnh hưởng tới năng lượng cục diện ra sao.
-- **Phân tích bộ sao & Phụ tinh:** KHÔNG ĐƯỢC BỎ SÓT BẤT KỲ SAO PHỤ NÀO VÀ CÁC SAO HƯỚNG VỀ (Tam Phương Tứ Chính). Bắt buộc phải gom cụm tạo thành các **Bộ Cách/Cách Cục**. ĐẶC BIỆT chú ý giải mã các bộ sao kinh điển nếu có mặt:
-  + 4 cục của Vòng Thái Tuế: **Tuế Hổ Phù** (Quang minh chính đại), **Tang Tuế Điếu** (Bất mãn, nghịch cảnh), **Dương Tử Phúc** (Thông minh, lấn lướt nhưng hay nhầm lẫn), **Âm Long Trực** (Thiệt thòi, nhẫn nhịn).
-  + Các bộ sát tinh/dâm tinh hội tụ: **Đào Không Sát** (Thông minh nhạy bén nhưng hay gãy đổ bất ngờ, ranh mãnh), **Phi Phục Thanh**, **Mã Khốc Khách**, **Lộc Mã Giao Trì**, **Không Kiếp Kình Đà**, **Hình Diêu**, **Binh Hình Tướng Ấn**... 
-  Hãy phân tích sâu sắc ý nghĩa của sự kết hợp này (Lợi thế - Rủi ro - Giải pháp).
-- **Vận thế ngoại lai:** Phân tích cực sâu, không nói chung chung. Chỉ rõ cách cục nào từ sao nào ở cung nào đang chiếu về gây tác động gì. Cung xung chiếu/tam hợp nếu dính Tuần/Triệt thì phải đánh giá là "vô lực" hay "bị chặn đứng".
-- **Góc nhìn thực tế & Nhìn nhận bản thân:** BẮT BUỘC ĐƯA RA GÓC NHÌN THỰC DỤNG NHẤT. Yêu cầu đương số "soi gương" nhìn thẳng vào những khiếm khuyết ngầm, sự ngộ nhận về bản thân, hoặc các vấn đề nan giải thực tế trong kinh doanh, đàm phán, chính trị công sở, và hôn nhân gia đình do cấu trúc cung này gây ra. Đừng e dè, lời lẽ phải sắc bén, vạch trần đúng cốt lõi sự thật.
-- **Hướng đi chiến lược:** Đưa ra các phương án hành động CỤ THỂ, mang tính định hướng sinh tồn và phát triển rõ ràng (Ví dụ: Nên nương theo thời thế hay vùng lên, lùi một bước tiến ba bước, chọn môi trường làm việc nào đặc thù, quản lý tài chính phòng hờ rủi ro ra sao). Lời khuyên phải cực kỳ sát sườn, mang tính ứng dụng cao cho con người thời hiện đại.
+---
 
-LƯU Ý TRÌNH BÀY:
-- **TUYỆT ĐỐI KHÔNG sử dụng chữ nghiêng (italic) trong toàn bộ bài viết.** 
-- Luôn giữ format: **Tên Sao [Hành]** để hệ thống tô màu (Ví dụ: **Tử Vi [Thổ]**).
-- Văn phong: Minh triết, thực dụng nhưng uy nghiêm.
-- Sử dụng Markdown: Bôi đậm các thuật ngữ quan trọng.`;
+## LIÊN KẾT NGOẠI VI
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: prompt,
-      });
-      setPalaceInterpretations(prev => ({ ...prev, [palaceName]: response.text || '' }));
-    } catch (err) {
+* Xung chiếu: ${xungChieu.all}
+* Tam hợp: ${tamHop1.all}, ${tamHop2.all}
+* Nhị hợp: ${nhiHop.all}
+
+---
+
+## TỨ HÓA & PHI HÓA
+
+* Bố cục các sao toàn lá số (để tự suy luận phi hóa và tứ hóa): ${allPalacesStr}
+* Ghi chú: Hãy tự an Tứ Hóa (Lộc, Quyền, Khoa, Kỵ) theo Can của cung đang xét và Can của năm ${year}.
+
+---
+
+## LƯU NIÊN ${year}
+
+* Năm nay là ${year}, hãy tự an Lưu Tứ Hóa theo thiên can của năm ${year} để luận đoán những biến động.
+
+---
+
+## NGỮ CẢNH ĐỜI SỐNG
+
+* Tình trạng tình cảm: Chưa cung cấp (Hãy luận giải đa chiều)
+* Tình trạng công việc: Chưa cung cấp (Hãy luận giải đa chiều)
+* Tình trạng tài chính: Chưa cung cấp (Hãy luận giải đa chiều)
+
+→ Khi luận phải điều chỉnh theo trạng thái này, đưa ra các khả năng thực tế.
+
+---
+
+## LOGIC THEO TỪNG CUNG (BẮT BUỘC ÁP DỤNG)
+
+* Mệnh: tính cách, khí chất, người khác nhìn bạn
+* Phu Thê:
+  * Nếu độc thân → xu hướng yêu
+  * Nếu đang yêu → cách vận hành mối quan hệ
+  * Nếu kết hôn → chất lượng hôn nhân
+* Quan Lộc: nghề nghiệp, môi trường, thăng tiến
+* Tài Bạch: cách kiếm tiền, giữ tiền
+* Thiên Di: hình ảnh xã hội, cơ hội bên ngoài
+* Nô Bộc: bạn bè, network
+* Tật Ách: sức khỏe, tâm lý
+* Điền Trạch: tài sản, nhà cửa
+* Phúc Đức: nội tâm, phúc khí
+* Phụ Mẫu: quan hệ cha mẹ
+* Huynh Đệ: anh em
+* Tử Tức: con cái
+
+---
+
+## QUY TẮC ĐẶC BIỆT
+
+* Nếu vô chính diệu:
+  → Phải ghi rõ: "Cung này Vô Chính Diệu, mượn cung xung chiếu là [...] để luận"
+* Nếu mâu thuẫn:
+  → Ưu tiên chính tinh + phi hóa
+
+---
+
+## YÊU CẦU PHÂN TÍCH SÂU (SỬ DỤNG FORMAT ## CHO TITLE)
+
+## 1. BẢN CHẤT CUNG
+
+* Vai trò cung${isMenh ? '\n* Tương quan Mệnh - Cục (Cục sinh mệnh, Mệnh khắc cục...) và định hình cuộc đời' : ''}
+* Tác động của Âm Dương Thuận/Nghịch lý lên cách hành xử ở cung này
+* Mạnh/yếu
+
+## 2. BỘ SAO & CÁCH CỤC
+
+* Luận giải ĐẦY ĐỦ TẤT CẢ CÁC SAO (cả chính tinh và phụ tinh)
+* Nhận diện bộ cách (Sát Phá Tham, Cơ Nguyệt Đồng Lương…)
+* Đánh giá thực tế (tốt/xấu rõ ràng)
+
+## 3. PHI HÓA & DÒNG CHẢY
+
+* Lộc/Quyền/Khoa/Kỵ tác động gì
+* Dẫn hướng cuộc đời ra sao
+
+## 4. MÂU THUẪN NỘI TẠI
+
+* Có xung đột không
+* Biểu hiện ngoài đời
+* Hậu quả nếu không điều chỉnh
+
+## 5. TƯƠNG TÁC NGOẠI VI
+
+* Tam hợp / xung chiếu hỗ trợ hay phá
+
+## 6. BIỂU HIỆN NGOÀI ĐỜI
+
+* Hành vi thật
+* Điểm mạnh / điểm yếu
+
+## 7. GÓC NHÌN NGƯỜI KHÁC (Thông qua lăng kính cung này)
+
+* Người khác nhìn nhận đương số ra sao ở khía cạnh này
+* Có bị hiểu sai không
+
+## 8. LƯU NIÊN ${year}
+
+* Năm này cung này biến động gì
+* Cơ hội / rủi ro
+
+## 9. GIẢI PHÁP & HÀNH ĐỘNG CỤ THỂ
+
+* Giải pháp triệt để cho các vấn đề xấu / sao xấu
+* Nên làm gì (rõ ràng, thực tế)
+* Tránh gì
+
+---
+
+## OUTPUT
+
+* Xưng "bạn"
+* Văn phong như thầy Tử Vi thật
+* Không sáo rỗng
+* Dùng format: **Tử Vi [Thổ]**, **Thiên Cơ [Mộc]**
+* Kết luận 1–2 câu sắc bén
+* Ưu tiên nói điều người nghe cần, không phải muốn nghe`;
+
+      const text = await getAICompletion(prompt);
+      setPalaceInterpretations(prev => ({ ...prev, [palaceName]: text }));
+    } catch (err: any) {
       console.error(err);
+      const msg = err.message || 'Lỗi không xác định';
+      window.dispatchEvent(new CustomEvent('app-notification', { 
+        detail: { message: `Lỗi AI (${palaceName}): ${msg}`, type: 'error' } 
+      }));
     } finally {
       setIsGeneratingTabAI(false);
       setInterpretingPalace(null);
@@ -224,117 +336,42 @@ LƯU Ý TRÌNH BÀY:
     }
   };
 
-  const generateDecadalInterpretation = async (palaceName: string) => {
-    if (!chartData || isGeneratingTabAI) return;
-    setIsGeneratingTabAI(true);
-    setInterpretingDecadal(palaceName);
-    try {
-      const p = chartData.palaces.find((pal: any) => pal.name === palaceName);
-      if (!p) return;
-
-      const formatStar = (s: any) => `${s.name}${s.element ? ` [${s.element}]` : ''}${s.brightness ? ` (${s.brightness})` : ''}`;
-      const major = p.majorStars.map(formatStar).join(', ');
-      const minorGood = p.minorStars.filter((s: any) => s.type === 'good').map(formatStar).join(', ');
-      const minorBad = p.minorStars.filter((s: any) => s.type === 'bad').map(formatStar).join(', ');
-      const tuanTriet = [];
-      if (p.isTuan) tuanTriet.push('Tuần Không');
-      if (p.isTriet) tuanTriet.push('Triệt Lộ');
-
-      const prompt = `Bạn là một bậc thầy tử vi lỗi lạc với kiến thức thâm sâu về Huyền học.
-Hãy luận giải chi tiết ĐẠI VẬN 10 NĂM tại cung ${p.name} (Từ ${p.decadalRange[0]} đến ${p.decadalRange[1]} tuổi).
-
-THÔNG TIN ĐẠI VẬN:
-- Cung: ${p.name}
-- Can Chi Đại Vận: ${p.stem} ${p.branch}
-- Tràng sinh: ${p.changsheng12}
-- Chính Tinh: ${major || 'Vô chính diệu'}
-- Cát Tinh / Phụ Tinh: ${minorGood || 'Không'}
-- Sát Tinh / Hình Kỵ: ${minorBad || 'Không'}
-- Tuần/Triệt: ${tuanTriet.join(' & ') || 'Không bị'}
-
-YÊU CẦU NỘI DUNG MỞ RỘNG ĐẠI VẬN 10 NĂM (TUÂN THỦ TUYỆT ĐỐI CÁC QUY TẮC SAU):
-
----
-## 0. TỔNG LỆNH VỀ TƯ DUY (TONE OF VOICE)
-- **THỰC TẾ TUYỆT ĐỐI**: Loại bỏ hoàn toàn ngôn từ huyền bí, hoa mỹ, sáo rỗng. Luận giải như một chuyên gia tư vấn chiến lược đang phân tích dự án kinh doanh/đời sống thực tế.
-- **BLUNT & DIRECT (THẲNG THẮN)**: Vạch trần vấn đề, chỉ rõ rủi ro, không bao che. Đừng nói nếu bạn không có giải pháp.
-- **CÔNG THỨC HÀNH ĐỘNG**: Mọi vấn đề phải đi kèm: [Phân tích logic] -> [Rủi ro thực tế] -> [Giải pháp/Hành động cụ thể].
----
-
-## 1. PHÂN TÍCH VỊ THẾ CUNG ĐẠI VẬN & HÀNH
-- **Địa chi & Ngũ hành:** Đại vận đóng tại cung Tý/Sửu... hành gì? Tương tác sinh/khắc với Mệnh theo góc nhìn thực dụng (ví dụ: bị khắc thường là giai đoạn bị chèn ép, phải nỗ lực gấp đôi; được sinh là giai đoạn thuận lợi để tận dụng nguồn lực).
-
-## 2. GÓC NHÌN DỤNG THẾ (TỔNG BỨC TRANH 10 NĂM)
-Không nói chung chung. Phân tích: Thập kỷ này là giai đoạn "đầu tư" (phát triển năng lực, tích lũy) hay giai đoạn "thu hoạch" (tăng trưởng)? Đánh giá dựa trên cấu trúc bộ sao thực tế (Ví dụ: Có sao chủ quyền lực/tài sản không?).
-
-## 3. NHỮNG SỰ KIỆN TRỌNG ĐIỂM (TƯƠNG TÁC BỘ SAO)
-Phân tích kỹ các bộ cách từ Chính tinh, Sát tinh, Cát tinh (Tam phương tứ chính):
-- **Cơ hội (Cát/Phúc tinh):** Chỉ rõ các điểm "vàng" có thể khai thác.
-- **Thách thức (Sát/Bại tinh):** Điểm yếu thực tế: Kình/Đà (cản phá), Không/Kiếp (thất thoát bất ngờ)... 
-Ánh xạ cụ thể vào (Tài lộc, Sự nghiệp, Hôn nhân, Sức khỏe).
-
-## 4. CHI TIẾT VẬN TRÌNH TỪNG NĂM (THỰC TẾ & HÀNH ĐỘNG)
-Luận giải cụ thể từng năm từ tuổi ${p.decadalRange[0]} đến ${p.decadalRange[1]}:
-- Nêu rõ Tiểu Hạn đóng tại cung nào.
-- **Phân tích sát sườn:** Mỗi năm cần chỉ rõ:
-  + **Thuận lợi:** Điểm sáng/cơ hội chính.
-  + **Khó khăn:** Trở ngại chính cần né hoặc đối diện.
-  + **Hướng đi (Action):** Một câu hành động cụ thể cho năm đó (VD: "Năm này ưu tiên tích lũy, chưa nên đầu tư lớn").
-- Format: "### Năm [Tuổi] - [Cung]: [Thuận lợi] // [Khó khăn] // [Hướng đi cụ thể]".
-
-## 5. TƯƠNG TÁC ĐẠI VẬN - MỆNH/THÂN & LƯU NIÊN
-- **Cơ chế Tương tác (Tăng quyền hay Hút năng lượng):** 
-  + **Tăng quyền (Thuận lợi):** Khi hành đại vận sinh Mệnh, hoặc hội tụ bộ sao chủ lực (Tử, Phủ, Vũ, Tướng) tương hợp với cấu trúc Mệnh/Thân. Phân tích quyền lực, địa vị, tài chính sẽ tăng trưởng ra sao.
-  + **Hút năng lượng (Thử thách):** Khi hành đại vận khắc Mệnh, hoặc hội tụ sát tinh/bại tinh. Phân tích bạn sẽ bị "hút" ở đâu (Sức khỏe, sự nghiệp, hay tinh thần) và cách bảo toàn năng lượng.
-- **Đại vận - Lưu niên (Tiểu vận):** Kết hợp tổng quan 10 năm với từng năm cụ thể để chỉ ra năm nào là ĐỈNH CAO và năm nào cần PHÒNG THỦ.
-
-## 6. CHIẾN LƯỢC SINH TỒN & GIẢI PHÁP THỰC TẾ
-- **Tử huyệt:** Đâu là lỗi sai bạn chắc chắn sẽ mắc nếu không cẩn trọng?
-- **Hành động cụ thể:** Lời khuyên 1-2-3 phải thuộc về tài chính, cách ứng xử trong công việc, chọn đối tác... mang tính ứng dụng cao.
-
-## 7. THẺ TÓM TẮT (STUDY CARD)
-- [ ] **Trạng thái chính:** (Tấn công / Phòng thủ / Tích lũy)
-- [ ] **Tài sản & Sự nghiệp:** (Cơ hội cụ thể)
-- [ ] **Cảnh báo quan trọng nhất:** (1 ý duy nhất cần ghi nhớ)
-
-LƯU Ý TRÌNH BÀY:
-- **TUYỆT ĐỐI KHÔNG sử dụng chữ nghiêng (italic) trong toàn bộ bài viết.** 
-- Luôn giữ format: **Tên Sao [Hành]** để hệ thống tô màu (Ví dụ: **Tử Vi [Thổ]**).
-- Sử dụng Markdown: Bôi đậm các thuật ngữ quan trọng.`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: prompt,
-      });
-      setDecadalInterpretations(prev => ({ ...prev, [palaceName]: response.text || '' }));
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsGeneratingTabAI(false);
-      setInterpretingDecadal(null);
-    }
-  };
-
   return (
     <TooltipProvider delay={300}>
       <div className="min-h-screen bg-background text-foreground selection:bg-primary/20 overflow-x-hidden font-sans">
         
+        {/* Global Notifications */}
+        <div className="fixed bottom-6 right-6 z-[100] flex flex-col gap-3 max-w-sm w-full">
+           <AnimatePresence>
+              {notifications.map(notification => (
+                <motion.div
+                  key={notification.id}
+                  initial={{ opacity: 0, x: 50, scale: 0.9 }}
+                  animate={{ opacity: 1, x: 0, scale: 1 }}
+                  exit={{ opacity: 0, x: 20, scale: 0.9 }}
+                  className={cn(
+                    "p-4 rounded-2xl shadow-2xl border flex items-start gap-4 backdrop-blur-xl",
+                    notification.type === 'error' ? "bg-red-500/90 text-white border-red-400/20" : "bg-primary/90 text-white border-primary/20"
+                  )}
+                >
+                   {notification.type === 'error' ? <ShieldAlert className="w-5 h-5 shrink-0" /> : <Info className="w-5 h-5 shrink-0" />}
+                   <p className="text-sm font-bold leading-snug">{notification.message}</p>
+                   <button onClick={() => setNotifications(prev => prev.filter(n => n.id !== notification.id))} className="ml-auto">
+                      <X className="w-4 h-4 opacity-70" />
+                   </button>
+                </motion.div>
+              ))}
+           </AnimatePresence>
+        </div>
+
         {/* Navigation Bar */}
         <nav className="fixed top-0 left-0 w-full z-50 bg-background/80 backdrop-blur-md border-b border-border h-16 flex items-center px-6 justify-between">
           <div className="flex items-center gap-2 cursor-pointer" onClick={handleReset}>
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-              <Sparkles className="w-5 h-5 text-background" />
-            </div>
-            <span className="font-heading font-black text-xl tracking-tight text-foreground">SOMENH.AI</span>
+            <span className="font-heading font-black text-2xl tracking-tighter text-primary">TỬ VI</span>
           </div>
-          <div className="hidden md:flex items-center gap-8 text-sm font-medium text-muted-foreground">
-            <a href="#" className="hover:text-primary transition-colors">Tra cứu</a>
-            <a href="#" className="hover:text-primary transition-colors">Giải mã AI</a>
-            <a href="#" className="hover:text-primary transition-colors">Cộng đồng</a>
+          <div className="flex items-center gap-3">
+             {/* Login button removed as requested */}
           </div>
-          <Button variant="outline" className="border-primary text-primary hover:bg-primary hover:text-background rounded-[6px] font-bold bg-transparent">
-             Đăng nhập
-          </Button>
         </nav>
 
         <main className="pt-20 md:pt-24 pb-6 md:pb-12">
@@ -360,9 +397,6 @@ LƯU Ý TRÌNH BÀY:
                     setSelectedPalaceIndex(idx);
                     setIsPalaceDialogOpen(true);
                   }}
-                  decadalInterpretations={decadalInterpretations}
-                  interpretingDecadal={interpretingDecadal}
-                  generateDecadalInterpretation={generateDecadalInterpretation}
                 />
                 
                 <PalaceDetailDialog 
@@ -1066,10 +1100,7 @@ function ResultView({
   onGenerateAll,
   isSubscribed,
   onSubscribe,
-  onPalaceClick,
-  decadalInterpretations,
-  interpretingDecadal,
-  generateDecadalInterpretation
+  onPalaceClick
 }: any) {
   const PRIORITY_ORDER = ['Mệnh', 'Tài Bạch', 'Quan Lộc', 'Phu Thê', 'Thiên Di', 'Phúc Đức', 'Phụ Mẫu', 'Điền Trạch', 'Nô Bộc', 'Tật Ách', 'Tử Tức', 'Huynh Đệ'];
   
@@ -1090,9 +1121,6 @@ function ResultView({
     setExpandedPalaces(prev => ({ ...prev, [pName]: !prev[pName] }));
   };
 
-  const navTabs = ['Lá số', 'Đại vận'];
-  const [activeNavTab, setActiveNavTab] = useState('Lá số');
-
   return (
     <motion.div 
       initial={{ opacity: 0 }}
@@ -1100,7 +1128,7 @@ function ResultView({
       exit={{ opacity: 0 }}
       className="container mx-auto px-4 md:px-4 max-w-5xl pt-0 md:pt-2"
     >
-      <div className="flex flex-col gap-4 md:gap-6">
+      <div className="flex flex-col gap-4 md:gap-6" id="result-view-container">
         
         <div className="space-y-3 md:space-y-4 px-3 md:px-0">
            <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 md:gap-3">
@@ -1114,40 +1142,29 @@ function ResultView({
 
            <div className="w-full border-b border-border overflow-x-auto invisible-scrollbar flex items-center justify-between gap-4">
               <div className="flex">
-                {navTabs.map((tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveNavTab(tab)}
-                    className={cn(
-                      "px-4 py-1.5 text-[12px] font-bold transition-all relative whitespace-nowrap",
-                      activeNavTab === tab 
-                        ? "text-primary border-b-2 border-primary" 
-                        : "text-muted-foreground hover:text-foreground"
-                    )}
-                  >
-                    {tab}
-                  </button>
-                ))}
+                <div className="px-4 py-1.5 text-[12px] font-black text-primary border-b-2 border-primary whitespace-nowrap uppercase">
+                  Lá số chi tiết
+                </div>
               </div>
 
               <div className="flex items-center gap-1.5 md:gap-2 shrink-0 pb-1 pr-1">
                 <Button 
-                  onClick={() => exportRef.current?.exportImage()}
-                  variant="ghost" 
-                  size="sm"
-                  className="bg-[#F0FDF4] border border-primary/20 text-primary hover:bg-primary/10 text-[11px] md:text-[12px] font-bold shadow-sm rounded-xl h-7 md:h-8 px-2.5 md:px-3 flex items-center gap-1.5"
+                   onClick={() => exportRef.current?.exportImage()}
+                   variant="ghost" 
+                   size="sm"
+                   className="bg-[#F0FDF4] border border-primary/20 text-primary hover:bg-primary/10 text-[11px] md:text-[12px] font-bold shadow-sm rounded-xl h-7 md:h-8 px-2.5 md:px-3 flex items-center gap-1.5"
                 >
-                  <Download className="w-3.5 h-3.5" />
-                  PNG
+                   <Download className="w-3.5 h-3.5" />
+                   PNG
                 </Button>
                 <Button 
-                  onClick={() => exportRef.current?.exportPDF()}
-                  variant="ghost" 
+                   onClick={() => exportRef.current?.exportPDF()}
+                   variant="ghost" 
                    size="sm"
-                  className="bg-[#F0FDF4] border border-primary/20 text-primary hover:bg-primary/10 text-[11px] md:text-[12px] font-bold shadow-sm rounded-xl h-7 md:h-8 px-2.5 md:px-3 flex items-center gap-1.5"
+                   className="bg-[#F0FDF4] border border-primary/20 text-primary hover:bg-primary/10 text-[11px] md:text-[12px] font-bold shadow-sm rounded-xl h-7 md:h-8 px-2.5 md:px-3 flex items-center gap-1.5"
                 >
-                  <FileText className="w-3.5 h-3.5" />
-                  PDF
+                   <FileText className="w-3.5 h-3.5" />
+                   PDF
                 </Button>
               </div>
            </div>
@@ -1155,426 +1172,203 @@ function ResultView({
 
         <div className="space-y-8">
           <div className="w-full">
-             <div className="bg-white rounded-[24px] border-none md:border md:border-border shadow-none md:shadow-lg p-3 md:p-3 overflow-hidden flex flex-col items-center">
-                <AstrologyChart 
-                  palaces={chartData.palaces}
-                  menhIdx={chartData.menhIdx}
-                  thanIdx={chartData.thanIdx}
-                  birthInfo={birthInfo}
-                  lunar={chartData.lunar}
-                  solar={chartData.solar}
-                  stemBranchYear={chartData.stemBranchYear}
-                  yinYang={chartData.yinYang}
-                  yinYangHarmony={chartData.yinYangHarmony}
-                  fiveElementsClass={chartData.fiveElementsClass}
-                  menhFull={chartData.menhFull}
-                  thanPalace={chartData.thanPalace}
-                  patterns={chartData.patterns}
-                  elementHarmony={chartData.elementHarmony}
-                  canLuong={chartData.canLuong}
-                  chuMenh={chartData.chuMenh}
-                  chuThan={chartData.chuThan}
-                  laiNhanCung={chartData.laiNhanCung}
-                  currentAge={chartData.currentAge}
-                  currentDecadal={chartData.currentDecadal}
-                  showYearlyStars={true}
-                  showYearlyMutagens={true}
-                  showDecadalStars={true}
-                  exportRef={exportRef}
-                  onPalaceClick={(idx: number) => {
-                    const palaceName = chartData.palaces[idx].name;
-                    if (!expandedPalaces[palaceName]) togglePalace(palaceName);
-                    document.getElementById(`palace-card-${palaceName}`)?.scrollIntoView({ behavior: 'smooth' });
-                  }}
-              />
-           </div>
-        </div>
+            <div className="bg-white rounded-[24px] border-none md:border md:border-border shadow-none md:shadow-lg p-3 md:p-3 overflow-hidden flex flex-col items-center">
+               <AstrologyChart 
+                 palaces={chartData.palaces}
+                 menhIdx={chartData.menhIdx}
+                 thanIdx={chartData.thanIdx}
+                 birthInfo={birthInfo}
+                 lunar={chartData.lunar}
+                 solar={chartData.solar}
+                 stemBranchYear={chartData.stemBranchYear}
+                 yinYang={chartData.yinYang}
+                 yinYangHarmony={chartData.yinYangHarmony}
+                 fiveElementsClass={chartData.fiveElementsClass}
+                 menhFull={chartData.menhFull}
+                 thanPalace={chartData.thanPalace}
+                 patterns={chartData.patterns}
+                 elementHarmony={chartData.elementHarmony}
+                 canLuong={chartData.canLuong}
+                 chuMenh={chartData.chuMenh}
+                 chuThan={chartData.chuThan}
+                 laiNhanCung={chartData.laiNhanCung}
+                 currentAge={chartData.currentAge}
+                 currentDecadal={chartData.currentDecadal}
+                 showYearlyStars={true}
+                 showYearlyMutagens={true}
+                 showDecadalStars={false}
+                 exportRef={exportRef}
+                 onPalaceClick={(idx: number) => {
+                   const palaceName = chartData.palaces[idx].name;
+                   if (!expandedPalaces[palaceName]) togglePalace(palaceName);
+                   document.getElementById(`palace-card-${palaceName}`)?.scrollIntoView({ behavior: 'smooth' });
+                 }}
+               />
+            </div>
+          </div>
 
-        {activeNavTab === 'Lá số' && (
-           <div className="px-0 md:px-0">
-           <div id="ai-section" className="space-y-4 md:space-y-6 mt-4 md:mt-6 pb-10 md:pb-20">
-              <div className="flex flex-col items-center text-center space-y-1 max-w-xl mx-auto mb-3 md:mb-6">
-                 <div className="px-2 py-0.5 bg-primary/10 text-primary text-[9px] font-black rounded-full border border-primary/20 uppercase tracking-[0.2em]">
-                    CHIÊM CÁT VẬN MỆNH
-                 </div>
-                 <h2 className="text-[17px] md:text-xl font-heading font-black text-foreground uppercase tracking-tight">Thánh Nhân Giải Mã</h2>
-                 <p className="text-muted-foreground text-[11px] md:text-sm max-w-xs leading-tight">
-                    Luận giải chi tiết 12 cung số từ trí tuệ nhân tạo.
-                 </p>
-                 <Button 
-                   onClick={onGenerateAll}
-                   variant="outline"
-                   size="sm"
-                   disabled={isGenerating}
-                   className="mt-3 md:mt-4 h-8 md:h-10 border-primary/30 text-primary hover:bg-primary/5 rounded-full text-[10px] md:text-xs font-black px-6 shadow-sm"
-                 >
-                   {isGenerating ? <Loader2 className="w-3 h-3 animate-spin mr-2" /> : <Sparkles className="w-3 h-3 mr-2 text-yellow-500" />}
-                   GIẢI MÃ TRỌN BỘ 12 CUNG
-                 </Button>
-              </div>
+          <div className="px-0 md:px-0">
+            <div id="ai-section" className="space-y-4 md:space-y-6 mt-4 md:mt-6 pb-10 md:pb-20">
+                <div className="flex flex-col items-center text-center space-y-1 max-w-xl mx-auto mb-3 md:mb-6">
+                   <div className="px-2 py-0.5 bg-primary/10 text-primary text-[9px] font-black rounded-full border border-primary/20 uppercase tracking-[0.2em]">
+                      CHIÊM CÁT VẬN MỆNH
+                   </div>
+                   <h2 className="text-[17px] md:text-xl font-heading font-black text-foreground uppercase tracking-tight">Thánh Nhân Giải Mã</h2>
+                   <p className="text-muted-foreground text-[11px] md:text-sm max-w-xs leading-tight">
+                      Luận giải chi tiết 12 cung số từ trí tuệ nhân tạo.
+                   </p>
+                   <Button 
+                     onClick={onGenerateAll}
+                     variant="outline"
+                     size="sm"
+                     disabled={isGenerating}
+                     className="mt-3 md:mt-4 h-8 md:h-10 border-primary/30 text-primary hover:bg-primary/5 rounded-full text-[10px] md:text-xs font-black px-6 shadow-sm"
+                   >
+                     {isGenerating ? <Loader2 className="w-3 h-3 animate-spin mr-2" /> : <Sparkles className="w-3 h-3 mr-2 text-yellow-500" />}
+                     GIẢI MÃ TRỌN BỘ 12 CUNG
+                   </Button>
+                </div>
 
-           <div className="space-y-3">
-              {palaceTabs.map((pName: string, idx: number) => {
-                const isThanPalace = chartData.palaces[chartData.thanIdx].name === pName;
-                const interpretation = palaceInterpretations[pName];
-                const isExpanded = expandedPalaces[pName];
-                const isGeneratingCurrent = (isGenerating && interpretingPalace === pName);
+             <div className="space-y-3">
+                {palaceTabs.map((pName: string, idx: number) => {
+                  const isThanPalace = chartData.palaces[chartData.thanIdx].name === pName;
+                  const interpretation = palaceInterpretations[pName];
+                  const isExpanded = expandedPalaces[pName];
+                  const isGeneratingCurrent = (isGenerating && interpretingPalace === pName);
 
-                return (
-                  <motion.div 
-                    id={`palace-card-${pName}`}
-                    initial={{ opacity: 0, y: 10 }}
-                    whileInView={{ opacity: 1, y: 0 }}
-                    transition={{ delay: idx * 0.03 }}
-                    key={pName} 
-                    className="bg-white rounded-xl border border-border shadow-sm transition-all overflow-hidden"
-                  >
-                    <div className="p-3 md:p-4 flex flex-row items-start gap-3">
-                       <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center text-white shrink-0 font-black text-[10px]">
-                          {idx + 1}
-                       </div>
+                  return (
+                    <motion.div 
+                      id={`palace-card-${pName}`}
+                      initial={{ opacity: 0, y: 10 }}
+                      whileInView={{ opacity: 1, y: 0 }}
+                      transition={{ delay: idx * 0.03 }}
+                      key={pName} 
+                      className="bg-white rounded-xl border border-border shadow-sm transition-all overflow-hidden"
+                    >
+                      <div className="p-3 md:p-4">
+                        <div className="flex flex-row items-center gap-3 mb-3">
+                           <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center text-white shrink-0 font-black text-[10px]">
+                              {idx + 1}
+                           </div>
 
-                       <div className="flex-1 space-y-2">
-                              <div className="flex flex-row items-center justify-center gap-4">
-                                 <h3 className="text-[15px] font-heading font-black text-foreground">
-                                    Cung {pName} {isThanPalace && '+ Thân'}
-                                 </h3>
-                                 
+                           <div className="flex-1 flex flex-row items-center justify-between gap-4">
+                              <h3 className="text-[15px] font-heading font-black text-foreground">
+                                 Cung {pName} {isThanPalace && '+ Thân'}
+                              </h3>
+                              
+                              {!interpretation && (
                                  <Button 
                                    onClick={() => { setActiveTab(pName); onGenerate(pName); if (!isExpanded) togglePalace(pName); }}
                                    disabled={isGenerating}
                                    size="sm"
-                                   className="h-8 px-4 bg-primary text-white rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-lg hover:scale-105 transition-transform"
+                                   className="h-8 px-4 bg-primary text-white rounded-lg text-[11px] font-black flex items-center gap-1 shadow-lg hover:scale-105 transition-transform shrink-0"
                                  >
-                                    {isGeneratingCurrent ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 fill-current" />}
+                                    {isGeneratingCurrent && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                                     LUẬN GIẢI
                                  </Button>
-                              </div>
+                              )}
+                           </div>
+                        </div>
 
-                          <div className="space-y-1">
-                             <p className="text-muted-foreground text-[12px] leading-relaxed italic text-justify pr-2">
-                                {PALACE_DESCRIPTIONS[pName] || `Phân tích ${pName.toLowerCase()} trên cơ sở tam phương tứ chính và các bộ sao đặc biệt.`}
-                             </p>
+                        <div className="space-y-1 mb-2">
+                           <p className="text-muted-foreground text-[12px] leading-relaxed italic text-justify">
+                              {PALACE_DESCRIPTIONS[pName] || `Phân tích ${pName.toLowerCase()} trên cơ sở tam phương tứ chính và các bộ sao đặc biệt.`}
+                           </p>
+                        </div>
 
-                             {(interpretation || isGeneratingCurrent) && (
-                                <AnimatePresence>
-                                   {isExpanded && (
-                                      <motion.div
-                                        initial={{ height: 0, opacity: 0 }}
-                                        animate={{ height: 'auto', opacity: 1 }}
-                                        exit={{ height: 0, opacity: 0 }}
-                                        className="pt-6 border-t border-dashed border-border mt-5 overflow-hidden"
-                                      >
-                                         {isGeneratingCurrent ? (
-                                           <div className="flex items-center gap-2 py-8 justify-center animate-pulse text-primary font-black text-[12px]">
-                                              <Loader2 className="w-5 h-5 animate-spin" />
-                                              <span>AI đang thấu suốt bí mật tại cung {pName}...</span>
-                                           </div>
-                                         ) : (
-                                           <div className="prose prose-purple prose-sm max-w-none 
-                                           prose-headings:text-slate-900 prose-headings:tracking-tighter prose-headings:mt-14 prose-headings:mb-6 prose-headings:pb-3 prose-headings:border-b
-                                           prose-h2:text-[20px] prose-h2:font-bold prose-h2:uppercase prose-h2:tracking-wider prose-h2:text-slate-900 prose-h2:font-sans
-                                           prose-p:text-[13px] prose-p:leading-[1.9] prose-p:tracking-normal prose-p:text-slate-600 prose-p:mb-5 prose-p:text-justify font-sans
-                                           prose-strong:font-bold 
-                                           prose-ul:my-5 prose-ul:list-disc prose-ul:pl-8
-                                           prose-li:my-2 prose-li:text-slate-600
-                                           prose-blockquote:border-l-4 prose-blockquote:border-primary/40 prose-blockquote:pl-6 prose-blockquote:not-italic prose-blockquote:text-muted-foreground
-                                           selection:bg-primary/20">
-                                              <Markdown 
-                                                remarkPlugins={[remarkGfm]}
-                                                components={{
-                                                  strong: ({node, children, ...props}) => {
-                                                    const text = String(children);
-                                                    // High-end element colors
-                                                    const elementColors: Record<string, string> = {
-                                                      'Kim': 'text-[#64748b]', // Slate Gray
-                                                      'Mộc': 'text-[#059669]', // Emerald
-                                                      'Thủy': 'text-[#1d4ed8]', // Royal Blue
-                                                      'Hỏa': 'text-[#be123c]', // Crimson
-                                                      'Thổ': 'text-[#a16207]'  // Golden Brown
-                                                    };
-                                                    // Pattern to match "Star Name [Element]"
-                                                    const match = text.match(/(.*) \[(Kim|Mộc|Thủy|Hỏa|Thổ)\]/);
-                                                    if (match) {
-                                                      const starName = match[1];
-                                                      const element = match[2];
-                                                      return (
-                                                        <strong 
-                                                          className={cn(elementColors[element] || 'text-primary', "font-bold tracking-tight")} 
-                                                          {...props}
-                                                        >
-                                                          {starName}
-                                                        </strong>
-                                                      );
+                        {(interpretation || isGeneratingCurrent) && (
+                           <AnimatePresence>
+                              {isExpanded && (
+                                 <motion.div
+                                   initial={{ height: 0, opacity: 0 }}
+                                   animate={{ height: 'auto', opacity: 1 }}
+                                   exit={{ height: 0, opacity: 0 }}
+                                   className="pt-6 border-t border-dashed border-border mt-5 overflow-hidden"
+                                 >
+                                           {isGeneratingCurrent ? (
+                                             <div className="flex items-center gap-2 py-8 justify-center animate-pulse text-primary font-black text-[12px]">
+                                                <Loader2 className="w-5 h-5 animate-spin" />
+                                                <span>AI đang thấu suốt bí mật tại cung {pName}...</span>
+                                             </div>
+                                           ) : (
+                                             <div className="prose prose-purple prose-sm max-w-none 
+                                             prose-headings:text-slate-900 prose-headings:tracking-tighter prose-headings:mt-14 prose-headings:mb-6 prose-headings:pb-3 prose-headings:border-b
+                                             prose-h2:text-[18px] prose-h2:font-bold prose-h2:uppercase prose-h2:tracking-wider prose-h2:text-slate-900 prose-h2:font-sans
+                                             prose-p:text-[14px] md:prose-p:text-[15px] prose-p:leading-[1.8] prose-p:tracking-normal prose-p:text-slate-600 prose-p:mb-5 prose-p:text-justify font-sans
+                                             prose-strong:font-bold 
+                                             prose-ul:my-5 prose-ul:list-disc prose-ul:pl-8
+                                             prose-li:my-2 prose-li:text-[14px] md:prose-li:text-[15px] prose-li:text-slate-600
+                                             prose-blockquote:border-l-4 prose-blockquote:border-primary/40 prose-blockquote:pl-6 prose-blockquote:not-italic prose-blockquote:text-muted-foreground
+                                             selection:bg-primary/20 text-[14px] md:text-[15px]">
+                                                <Markdown 
+                                                  remarkPlugins={[remarkGfm]}
+                                                  components={{
+                                                    strong: ({node, children, ...props}) => {
+                                                      const text = String(children);
+                                                      // High-end element colors
+                                                      const elementColors: Record<string, string> = {
+                                                        'Kim': 'text-[#64748b]', // Slate Gray
+                                                        'Mộc': 'text-[#059669]', // Emerald
+                                                        'Thủy': 'text-[#1d4ed8]', // Royal Blue
+                                                        'Hỏa': 'text-[#be123c]', // Crimson
+                                                        'Thổ': 'text-[#a16207]'  // Golden Brown
+                                                      };
+                                                      // Pattern to match "Star Name [Element]"
+                                                      const match = text.match(/(.*) \[(Kim|Mộc|Thủy|Hỏa|Thổ)\]/);
+                                                      if (match) {
+                                                        const starName = match[1];
+                                                        const element = match[2];
+                                                        return (
+                                                          <strong 
+                                                            className={cn(elementColors[element] || 'text-primary', "font-bold tracking-tight")} 
+                                                            {...props}
+                                                          >
+                                                            {starName}
+                                                          </strong>
+                                                        );
+                                                      }
+                                                      return <strong className="text-foreground font-bold" {...props}>{children}</strong>;
                                                     }
-                                                    return <strong className="text-foreground font-bold" {...props}>{children}</strong>;
-                                                  }
-                                                }}
-                                              >
-                                                {interpretation}
-                                              </Markdown>
-                                           </div>
-                                         )}
-                                      </motion.div>
-                                   )}
-                                </AnimatePresence>
-                             )}
-
-                             <div className="pt-2 flex justify-center">
-                                <button 
-                                  onClick={() => togglePalace(pName)}
-                                  className="text-primary font-black flex items-center gap-1 hover:underline transition-all text-[11px] uppercase tracking-wider"
-                                >
-                                   {isExpanded ? 'Thu gọn luận giải' : 'Xem chi tiết luận giải'}
-                                   <ChevronDown className={cn("w-3.5 h-3.5 transition-transform", isExpanded && "rotate-180")} />
-                                </button>
-                             </div>
-                          </div>
-                       </div>
-                    </div>
-                  </motion.div>
-                );
-              })}
-           </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 pb-20">
-           <div className="bg-white p-4 rounded-xl border border-border shadow-sm space-y-3">
-              <h4 className="text-[14px] font-heading font-black text-foreground flex items-center gap-2">
-                 <Info className="w-4 h-4 text-primary" />
-                 Cơ Sở Luận Giải
-              </h4>
-              <div className="space-y-2">
-                 <div className="space-y-0.5">
-                    <p className="text-[10px] font-black uppercase text-primary">Tam phương Tứ chính</p>
-                    <p className="text-[11px] text-muted-foreground leading-snug">Phối hợp cung xung chiếu và tam hợp.</p>
-                 </div>
-                 <div className="space-y-0.5">
-                    <p className="text-[10px] font-black uppercase text-primary">Bộ cách đặc biệt</p>
-                    <p className="text-[11px] text-muted-foreground leading-snug">Nhận diện các cách cục lớn.</p>
-                 </div>
-              </div>
-           </div>
-
-           <div className="bg-primary p-5 rounded-2xl text-white shadow-lg relative overflow-hidden group col-span-1 md:col-span-2">
-              <div className="absolute -top-12 -right-12 w-48 h-48 bg-white/20 rounded-full blur-3xl transition-transform" />
-              <div className="relative z-10 space-y-3">
-                 <h4 className="text-lg font-heading font-black leading-tight text-white">Tư vấn Chuyên gia?</h4>
-                 <p className="text-white/80 text-[13px] font-medium">Nhận lời khuyên thấu đáo từ chuyên gia hàng đầu.</p>
-                 <Button className="h-9 px-6 bg-white text-primary hover:bg-slate-50 font-black text-[12px] rounded-lg shadow-md transition-all border-none">
-                    KẾT NỐI NGAY
-                 </Button>
-              </div>
-           </div>
-        </div>
-        </div>
-        )}
-
-        {activeNavTab === 'Đại vận' && (
-           <div className="px-3 md:px-0">
-           <div id="daivan-section" className="space-y-4 mt-6 pb-20">
-              <div className="flex flex-col items-center text-center space-y-1 max-w-xl mx-auto mb-6">
-                 <div className="px-2 py-0.5 bg-primary/10 text-primary text-[9px] font-black rounded-full border border-primary/20 uppercase tracking-[0.2em]">
-                    TỔNG KẾT ĐẠI VẬN
-                 </div>
-                 <h2 className="text-[17px] font-heading font-black text-foreground uppercase tracking-tight">Chiếu rọi 12 thập kỷ</h2>
-                 <p className="text-muted-foreground text-[11px] max-w-xs leading-tight">
-                    Toàn cảnh chu trình diễn biến thịnh suy qua từng mốc 10 năm của đời người.
-                 </p>
-              </div>
-
-              <div className="space-y-4">
-                 {[...chartData.palaces].sort((a, b) => a.decadalRange[0] - b.decadalRange[0]).map((p, idx) => {
-                   const interpretation = decadalInterpretations[p.name];
-                   const isExpanded = expandedPalaces[p.name];
-                   const isGeneratingCurrent = (isGenerating && interpretingDecadal === p.name);
-
-                   return (
-                     <motion.div 
-                       initial={{ opacity: 0, y: 15 }}
-                       whileInView={{ opacity: 1, y: 0 }}
-                       viewport={{ once: true }}
-                       key={p.name} 
-                       className="bg-white rounded-xl border border-border shadow-sm transition-all overflow-hidden"
-                     >
-                       <div className="p-4 md:p-6 flex flex-row items-start gap-4 md:gap-5">
-                          <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white shrink-0 font-black text-xs shadow-md">
-                             {idx + 1}
-                          </div>
-                       
-                          <div className="flex-1 space-y-4">
-                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                              <div className="flex flex-col gap-1">
-                                <div className="flex items-center gap-3">
-                                   <h3 className="text-[17px] font-heading font-black text-foreground uppercase tracking-wider">
-                                     ĐẠI VẬN {p.name}
-                                   </h3>
-                                    <div className="bg-primary/10 text-primary px-3 py-0.5 text-[10px] font-black rounded-full border border-primary/20">
-                                      {p.decadalRange[0]} - {p.decadalRange[1]} TUỔI
-                                    </div>
-                                </div>
-                                <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">
-                                  Thiên Can: <span className="font-bold text-slate-800">{p.stem}</span> • Địa Chi: <span className="font-bold text-slate-800">{p.branch}</span>
-                                </p>
-                              </div>
-
-                              <Button 
-                                onClick={() => { generateDecadalInterpretation(p.name); if (!isExpanded) togglePalace(p.name); }}
-                                disabled={isGenerating}
-                                className="h-9 px-6 bg-primary text-white rounded-xl text-[12px] font-bold flex items-center gap-2 shadow-lg hover:scale-105 transition-all"
-                              >
-                                 {isGeneratingCurrent ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4 fill-current" />}
-                                 LUẬN GIẢI AI
-                              </Button>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[12px]">
-                              <div className="bg-secondary/20 p-3 rounded-xl border border-border/50">
-                                <p className="font-bold text-slate-900 mb-1 text-[10px] uppercase tracking-wider flex items-center gap-1.5">
-                                  <Star className="w-3 h-3 text-primary" />
-                                  Chính Tinh
-                                </p>
-                                <p className="text-slate-700 leading-snug">
-                                  {p.majorStars.map(s => `${s.name} (${s.brightness})`).join(', ') || 'Vô chính diệu'}
-                                </p>
-                              </div>
-
-                              <div className="bg-green-50/50 p-3 rounded-xl border border-green-100">
-                                <p className="font-bold text-green-800 mb-1 text-[10px] uppercase tracking-wider flex items-center gap-1.5">
-                                  <Check className="w-3.5 h-3.5" />
-                                  Cát tinh
-                                </p>
-                                <p className="text-slate-600 leading-snug">
-                                  {p.minorStars.filter(s => s.type === 'good').map(s => s.name).join(', ') || 'Không có nhiều trợ lực'}
-                                </p>
-                              </div>
-
-                              <div className="bg-red-50/50 p-3 rounded-xl border border-red-100">
-                                <p className="font-bold text-red-800 mb-1 text-[10px] uppercase tracking-wider flex items-center gap-1.5">
-                                  <X className="w-3.5 h-3.5" />
-                                  Sát tinh
-                                </p>
-                                <p className="text-slate-600 leading-snug">
-                                  {p.minorStars.filter(s => s.type === 'bad').map(s => s.name).join(', ') || 'Không chịu sự phá hoại lớn'}
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="bg-slate-50/80 p-4 rounded-xl border border-border/60">
-                              <p className="font-bold text-slate-800 mb-3 text-[10px] uppercase tracking-wider text-center">Tiểu Hạn 10 Năm (Phân vùng theo tuổi)</p>
-                              <div className="grid grid-cols-5 md:grid-cols-10 gap-2">
-                                {Array.from({length: p.decadalRange[1] - p.decadalRange[0] + 1}).map((_, i) => {
-                                  const age = p.decadalRange[0] + i;
-                                  const baseYear = birthInfo?.lunarDate?.year;
-                                  const year = baseYear ? baseYear + age - 1 : null;
-                                  const smallLuckPalace = chartData.palaces.find((pal: any) => pal.smallLuckAge?.includes(age));
-                                  return (
-                                    <div 
-                                      key={age} 
-                                      title={year ? `Năm ${year}` : ''} 
-                                      onClick={() => {
-                                         // Pass smallLuckPalace or just age/year for detail view
-                                         onPalaceClick(chartData.palaces.findIndex((pal: any) => pal.name === smallLuckPalace?.name));
-                                      }}
-                                      className="flex flex-col items-center justify-center py-2 bg-white border border-slate-200 rounded-lg hover:bg-primary/5 hover:border-primary/20 transition-all cursor-pointer hover:shadow-md shadow-sm"
-                                    >
-                                      <span className="text-[12px] font-black text-slate-700">{age}</span>
-                                      <span className="text-[8px] font-bold text-muted-foreground uppercase">{smallLuckPalace?.name || '-'}</span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-
-                            <div className="flex justify-between items-center px-1">
-                               <div className="flex items-center gap-2">
-                                  <span className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">Tràng sinh:</span>
-                                  <span className="text-[12px] font-black text-primary uppercase tracking-widest">{p.changsheng12}</span>
-                               </div>
-
-                               <button 
-                                 onClick={() => togglePalace(p.name)}
-                                 className="text-primary font-black flex items-center gap-1 hover:underline transition-all text-[11px] uppercase tracking-wider"
-                               >
-                                  {isExpanded ? 'Thu gọn luận giải' : 'Xem luận giải chi tiết'}
-                                  <ChevronDown className={cn("w-3.5 h-3.5 transition-transform", isExpanded && "rotate-180")} />
-                               </button>
-                            </div>
-
-                            <AnimatePresence>
-                               {(interpretation || isGeneratingCurrent) && isExpanded && (
-                                  <motion.div 
-                                    initial={{ height: 0, opacity: 0 }}
-                                    animate={{ height: 'auto', opacity: 1 }}
-                                    exit={{ height: 0, opacity: 0 }}
-                                    className="overflow-hidden mt-4 pt-6 border-t border-dashed border-border"
-                                  >
-                                    {isGeneratingCurrent ? (
-                                      <div className="flex flex-col items-center gap-3 py-10 justify-center animate-pulse text-primary">
-                                        <Loader2 className="w-6 h-6 animate-spin" />
-                                        <span className="font-black text-[12px] uppercase tracking-widest">AI đang chiêm bái vận thế thập kỷ...</span>
-                                      </div>
-                                    ) : (
-                                      <div className="prose prose-purple prose-sm max-w-none 
-                                      prose-headings:text-slate-900 prose-headings:tracking-tighter prose-headings:mt-10 prose-headings:mb-5 prose-headings:pb-2 prose-headings:border-b
-                                      prose-h2:text-[18px] prose-h2:font-bold prose-h2:uppercase prose-h2:tracking-wider prose-h2:text-slate-900 prose-h2:font-sans
-                                      prose-p:text-[13px] prose-p:leading-[1.9] prose-p:tracking-normal prose-p:text-slate-600 prose-p:mb-5 prose-p:text-justify font-sans
-                                      prose-strong:font-bold 
-                                      prose-ul:my-5 prose-ul:list-disc prose-ul:pl-8
-                                      prose-li:my-2 prose-li:text-slate-600
-                                      prose-blockquote:border-l-4 prose-blockquote:border-primary/40 prose-blockquote:pl-6 prose-blockquote:not-italic prose-blockquote:text-muted-foreground
-                                      selection:bg-primary/20">
-                                         <Markdown 
-                                           remarkPlugins={[remarkGfm]}
-                                           components={{
-                                             strong: ({node, children, ...props}) => {
-                                               const text = String(children);
-                                               const elementColors: Record<string, string> = {
-                                                 'Kim': 'text-[#64748b]',
-                                                 'Mộc': 'text-[#059669]',
-                                                 'Thủy': 'text-[#1d4ed8]',
-                                                 'Hỏa': 'text-[#be123c]',
-                                                 'Thổ': 'text-[#a16207]',
-                                               };
-                                               
-                                               const match = text.match(/^(.*?) \[([Kim|Mộc|Thủy|Hỏa|Thổ]+)\]$/);
-                                               if (match) {
-                                                 const [, starName, element] = match;
-                                                 return (
-                                                   <strong 
-                                                     className={cn("font-bold px-1 mx-0.5 rounded-sm bg-secondary/30", elementColors[element] || 'text-foreground')} 
-                                                     title={`Hành: ${element}`}
-                                                     {...props}
-                                                   >
-                                                     {starName}
-                                                   </strong>
-                                                 );
-                                               }
-                                               return <strong className="text-foreground font-bold" {...props}>{children}</strong>;
-                                             }
-                                           }}
-                                         >
-                                           {interpretation}
-                                         </Markdown>
-                                      </div>
-                                    )}
-                                  </motion.div>
+                                                  }}
+                                                >
+                                                  {interpretation}
+                                                </Markdown>
+                                             </div>
+                                           )}
+                                        </motion.div>
+                                     )}
+                                  </AnimatePresence>
                                )}
-                            </AnimatePresence>
-                          </div>
-                       </div>
-                     </motion.div>
-                   );
-                 })}
-              </div>
-           </div>
-           </div>
-        )}
-      </div>
+
+                               {interpretation && (
+                                  <div className="pt-2 flex justify-center">
+                                     <button 
+                                       onClick={() => togglePalace(pName)}
+                                       className="text-primary font-black flex items-center gap-1 hover:underline transition-all text-[11px] uppercase tracking-wider"
+                                     >
+                                        {isExpanded ? 'Thu gọn luận giải' : 'Xem chi tiết luận giải'}
+                                        <ChevronDown className={cn("w-3.5 h-3.5 transition-transform", isExpanded && "rotate-180")} />
+                                     </button>
+                                  </div>
+                               )}
+                      </div>
+                    </motion.div>
+                  );
+                })}
+
+             </div>
+          </div>
+
+          <div className="pb-20">
+             {/* Expert Consultation and Basis removed as requested */}
+          </div>
+          </div>
+        </div>
       </div>
     </motion.div>
   );
 }
+
 
 function Timeline({ age, decadal }: { age: number, decadal: string }) {
   const years = Array.from({ length: 12 }, (_, i) => 2024 + i);

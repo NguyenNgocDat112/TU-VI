@@ -72,6 +72,7 @@ export function AstrologyChart({
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
   const [isExporting, setIsExporting] = useState(false);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   useEffect(() => {
     if (exportRef) {
@@ -80,7 +81,44 @@ export function AstrologyChart({
         exportPDF
       };
     }
-  }, [isExporting]);
+  }, [exportRef, palaces, birthInfo]); // Fixed undefined chartData
+
+  // Auto-generate preview image for long-press saving
+  useEffect(() => {
+    const generatePreview = async () => {
+      if (!chartRef.current) return;
+      try {
+        // Wait a bit for everything to render
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        
+        const actualWidth = 800;
+        const actualHeight = chartRef.current.offsetHeight;
+
+        const dataUrl = await toPng(chartRef.current, {
+          cacheBust: true,
+          backgroundColor: '#FFFFFF',
+          pixelRatio: 2, // 2 is enough for mobile preview/saving
+          width: actualWidth,
+          height: actualHeight,
+          style: {
+            transform: 'scale(1)',
+            transformOrigin: 'top left',
+            left: '0',
+            position: 'relative',
+            margin: '0',
+            padding: '0',
+          }
+        });
+        setPreviewImage(dataUrl);
+      } catch (err) {
+        console.error('Failed to generate preview image:', err);
+      }
+    };
+    
+    if (palaces.length > 0) {
+      generatePreview();
+    }
+  }, [palaces, showYearlyStars, showYearlyMutagens, showDecadalStars, showMajorStars, showGoodStars, showBadStars, birthInfo]);
 
   useEffect(() => {
     let animationFrameId: number;
@@ -132,20 +170,27 @@ export function AstrologyChart({
     chartRef.current.classList.add('export-mode');
     
     try {
-      await new Promise(resolve => setTimeout(resolve, 300));
+      // Ensure the chart is fully visible and rendered
+      await new Promise(resolve => setTimeout(resolve, 800));
 
-      const actualHeight = chartRef.current.offsetHeight;
+      const actualWidth = 800;
+      const actualHeight = chartRef.current.scrollHeight; // Use scrollHeight for full height
+
       const dataUrl = await toPng(chartRef.current, {
         cacheBust: true,
         backgroundColor: '#FFFFFF',
-        pixelRatio: 3,
-        width: 800,
+        pixelRatio: 4,
+        width: actualWidth,
         height: actualHeight,
         style: {
           transform: 'scale(1)',
           transformOrigin: 'top left',
+          left: '0',
+          position: 'relative',
           margin: '0',
           padding: '0',
+          visibility: 'visible',
+          display: 'block'
         }
       });
       
@@ -155,6 +200,7 @@ export function AstrologyChart({
       link.click();
     } catch (err) {
       console.error('Export failed:', err);
+      alert('Không thể xuất ảnh. Vui lòng thử lại hoặc chụp màn hình.');
     } finally {
       chartRef.current.classList.remove('export-mode');
       setIsExporting(false);
@@ -169,33 +215,40 @@ export function AstrologyChart({
     chartRef.current.classList.add('export-mode');
     
     try {
-      await new Promise(resolve => setTimeout(resolve, 300));
+      await new Promise(resolve => setTimeout(resolve, 800));
       
-      const actualHeight = chartRef.current.offsetHeight;
+      const actualWidth = 800;
+      const actualHeight = chartRef.current.scrollHeight;
+      
       const dataUrl = await toPng(chartRef.current, {
         cacheBust: true,
         backgroundColor: '#FFFFFF',
         pixelRatio: 3, 
-        width: 800,
+        width: actualWidth,
         height: actualHeight,
         style: {
           transform: 'scale(1)',
           transformOrigin: 'top left',
+          left: '0',
+          position: 'relative',
           margin: '0',
           padding: '0',
+          visibility: 'visible',
+          display: 'block'
         }
       });
       
       const pdf = new jsPDF({
-        orientation: actualHeight > 800 ? 'portrait' : 'landscape',
+        orientation: actualHeight > actualWidth ? 'portrait' : 'landscape',
         unit: 'px',
-        format: [800, actualHeight]
+        format: [actualWidth, actualHeight]
       });
       
-      pdf.addImage(dataUrl, 'PNG', 0, 0, 800, actualHeight);
+      pdf.addImage(dataUrl, 'PNG', 0, 0, actualWidth, actualHeight);
       pdf.save(`la-so-tu-vi-${birthInfo.name.replace(/\s+/g, '-')}.pdf`);
     } catch (err) {
       console.error('PDF Export failed:', err);
+      alert('Không thể xuất PDF. Vui lòng thử lại.');
     } finally {
       chartRef.current.classList.remove('export-mode');
       setIsExporting(false);
@@ -251,10 +304,26 @@ export function AstrologyChart({
   );
 
   return (
-    <div ref={containerRef} className="w-full relative overflow-hidden">
+    <div ref={containerRef} className="w-full relative overflow-hidden group/chart-container">
+      {/* Invisible overlay for long-press saving on mobile */}
+      {previewImage && !isExporting && (
+        <img 
+          src={previewImage} 
+          alt="Lá số Tử Vi" 
+          className="absolute top-0 z-[60] opacity-0 select-none pointer-events-auto"
+          style={{ 
+            width: '800px',
+            height: 'auto',
+            transform: `scale(${scale})`,
+            transformOrigin: 'top left',
+            left: `calc(50% - ${400 * scale}px)`
+          }}
+        />
+      )}
+
       <div 
         ref={chartRef} 
-        className={cn("bg-white absolute top-0", isExporting && "shadow-none border-none relative")}
+        className={cn("bg-white absolute top-0 overflow-visible", isExporting && "shadow-none border-none relative")}
         style={{ 
           width: '800px', 
           transform: `scale(${scale})`,
@@ -262,17 +331,17 @@ export function AstrologyChart({
           left: `calc(50% - ${400 * scale}px)`
         }}
       >
-        <div className="w-full p-1">
-          <div className="tuvi-grid border border-border relative bg-white mx-auto">
+        <div className="w-full p-2 bg-white">
+          <div className="tuvi-grid border border-border relative bg-slate-50 mx-auto shadow-inner">
             {gridMap.map((idx, i) => {
               if (idx === -1) {
                 if (i === 5) { // Center piece (spans 2x2)
                   return (
-                    <div key="center" className="tuvi-center col-span-2 row-span-2 flex flex-col items-center justify-center p-6 bg-white/95 backdrop-blur-sm relative overflow-hidden border border-border m-1 rounded-md shadow-xl">
-                      {/* Decorative Background for Center */}
-                      <div className="absolute inset-0 opacity-10 pointer-events-none">
-                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] h-[300px] rounded-full border border-primary animate-[spin_20s_linear_infinite]" />
-                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[250px] h-[250px] rounded-full border border-blue-400/40 animate-[spin_15s_linear_infinite_reverse]" />
+                    <div key="center" className="tuvi-center col-span-2 row-span-2 flex flex-col items-center justify-center p-4 md:p-6 bg-white relative overflow-visible border border-border/80 rounded-md shadow-lg">
+                      {/* Decorative Background for Center - Isolated overflow */}
+                      <div className="absolute inset-0 opacity-5 pointer-events-none overflow-hidden rounded-md">
+                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] rounded-full border border-primary animate-[spin_30s_linear_infinite]" />
+                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[350px] h-[350px] rounded-full border border-blue-400/40 animate-[spin_25s_linear_infinite_reverse]" />
                       </div>
 
                       <div className="relative z-10 w-full flex flex-col items-center">

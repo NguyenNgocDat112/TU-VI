@@ -37,16 +37,24 @@ export function ScrollToTop() {
           exit={{ opacity: 0, scale: 0.8, y: 20 }}
           className="fixed bottom-8 right-8 z-[100]"
         >
-          <Button
-            onClick={scrollToTop}
-            size="icon"
-            className={cn(
-              "w-12 h-12 rounded-full shadow-2xl bg-primary hover:bg-primary/90 text-primary-foreground transition-all duration-300 ring-4 ring-primary/20",
-              "group"
-            )}
+          <motion.div
+            className="relative"
+            animate={{ y: [0, -8, 0] }}
+            transition={{ repeat: Infinity, duration: 2.5, ease: "easeInOut" }}
           >
-            <ChevronUp className="w-6 h-6 transition-transform duration-300 group-hover:-translate-y-1" />
-          </Button>
+            <Button
+              onClick={scrollToTop}
+              size="icon"
+              className={cn(
+                "w-12 h-12 rounded-full shadow-[0_0_20px_rgba(var(--primary),0.5)] bg-primary text-primary-foreground focus:outline-none transition-colors relative z-10",
+                "hover:bg-primary/90"
+              )}
+            >
+              <ChevronUp className="w-6 h-6" />
+            </Button>
+            {/* Outer animated ring */}
+            <div className="absolute inset-0 rounded-full border-2 border-primary/40 animate-ping pointer-events-none" style={{ animationDuration: '3s' }}></div>
+          </motion.div>
         </motion.div>
       )}
     </AnimatePresence>

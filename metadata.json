@@ -1,6 +1,6 @@
 {
-  "name": "Tử Vi Chiêm Cát",
-  "description": "Lập lá số Tử vi trọn đời, xem vận hạn, công danh, sự nghiệp và tình duyên dựa trên lịch âm dương chuẩn xác.",
+  "name": "Tử Vi",
+  "description": "Ứng dụng lập lá số Tử Vi và luận giải chi tiết qua AI, giúp thấu hiểu bản mệnh và vận thế.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

@@ -3,6 +3,7 @@ import { Palace, GOOD_STARS } from '@/src/lib/astrology';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { STAR_MEANINGS, MINOR_STAR_MEANINGS, TU_HOA_MEANINGS } from '@/src/lib/starMeanings';
+import { Zap } from 'lucide-react';
 
 interface PalaceCellProps {
   key?: React.Key;
@@ -47,22 +48,17 @@ export function PalaceCell({
   const badStars = showBadStars ? filterStars(palace.adjectiveStars) : [];
   const totalStarsCount = goodStars.length + badStars.length;
 
-  // Decide on font size based on density
-  const getStarFontSize = () => {
-    if (totalStarsCount > 22) return 'text-[7px]';
-    if (totalStarsCount > 18) return 'text-[8px]';
-    if (totalStarsCount > 12) return 'text-[9px]';
-    return 'text-[9.5px]'; 
-  };
+  // Uniform font size for all stars (except major stars)
+  const getStarFontSize = () => 'text-[10px]';
 
   const getElementColor = (element: string) => {
     switch (element) {
-      case 'Kim': return 'text-[#71717a]'; // Gray/Zinc
-      case 'Mộc': return 'text-[#16a34a]'; // Green
-      case 'Thủy': return 'text-[#2563eb]'; // Blue
-      case 'Hỏa': return 'text-[#dc2626]'; // Red
-      case 'Thổ': return 'text-[#b45309]'; // Amber/Brown
-      default: return 'text-foreground/70';
+      case 'Kim': return 'text-slate-600'; 
+      case 'Mộc': return 'text-green-700'; 
+      case 'Thủy': return 'text-blue-800'; 
+      case 'Hỏa': return 'text-red-700'; 
+      case 'Thổ': return 'text-amber-800'; 
+      default: return 'text-foreground/80';
     }
   };
 
@@ -71,7 +67,7 @@ export function PalaceCell({
     if (['Thân', 'Dậu'].includes(branch)) return 'text-slate-600';
     if (['Hợi', 'Tý'].includes(branch)) return 'text-blue-700';
     if (['Dần', 'Mão'].includes(branch)) return 'text-green-700';
-    return 'text-amber-700'; // Thìn, Tuất, Sửu, Mùi
+    return 'text-amber-800'; // Thìn, Tuất, Sửu, Mùi
   };
 
   const getStarMeaning = (name: string) => {
@@ -86,28 +82,23 @@ export function PalaceCell({
     
     const content = (
       <div className={cn(
-        "flex flex-col leading-none",
-        isMajor && "items-center",
-        !isMajor && "w-full",
+        "flex leading-tight items-baseline gap-0.5",
+        isMajor && "items-center justify-center leading-none",
+        !isMajor && "w-full min-w-0 relative", // removed overflow-hidden to prevent clipping, added min-w-0
+        !isMajor && alignRight ? "justify-end" : "justify-start",
         getElementColor(star.element)
       )}>
-        <div className={cn(
-          "flex items-baseline gap-0.5",
-          !isMajor && "w-full",
-          !isMajor && alignRight ? "justify-end" : "justify-start"
+        <span className={cn(
+          isMajor ? "font-bold tracking-tighter drop-shadow-sm" : "font-semibold whitespace-nowrap tracking-tighter shrink-0",
+          isMajor ? "text-[14px] uppercase" : "text-[9.5px]" // slightly smaller to fit better
         )}>
-          <span className={cn(
-            isMajor ? "font-bold whitespace-nowrap tracking-tighter text-slate-800" : "font-semibold whitespace-nowrap tracking-tighter",
-            isMajor 
-              ? (palace.majorStars.length > 2 ? "text-[11px] uppercase" : "text-[12px] uppercase")
-              : getStarFontSize()
-          )}>
-            {star.name} {isMajor && star.brightness && `(${star.brightness})`}
+          {star.name}
+        </span>
+        {star.brightness && (
+          <span className={cn("font-bold opacity-80 shrink-0 uppercase", isMajor ? "text-[10px] ml-1" : "text-[8px] ml-0.5")}>
+            ({star.brightness})
           </span>
-          {!isMajor && star.brightness && (
-            <span className="text-[7.5px] font-semibold opacity-60 shrink-0">({star.brightness})</span>
-          )}
-        </div>
+        )}
       </div>
     );
 
@@ -134,7 +125,7 @@ export function PalaceCell({
     <div 
       onClick={onClick}
       className={cn(
-        "tuvi-cell group hover:bg-slate-50 hover:ring-2 hover:ring-primary/40 transition-all cursor-pointer relative flex flex-col min-h-[240px] border border-border bg-white",
+        "tuvi-cell group hover:bg-slate-50 hover:ring-2 hover:ring-primary/40 transition-all cursor-pointer relative flex flex-col min-h-[240px] border-r border-b border-border bg-white overflow-visible",
         isMenh && "bg-primary/5 ring-1 ring-inset ring-primary/40",
         highlight === 'tam-hop' && !isMenh && "bg-primary/5 ring-1 ring-inset ring-primary/20",
         highlight === 'xung-chieu' && "bg-secondary/10 ring-1 ring-inset ring-primary/10"
@@ -173,36 +164,26 @@ export function PalaceCell({
         </div>
       )}
 
-      {/* Minor Stars Section (Dynamic Flexible Distribution) */}
-      <div className={cn(
-        "px-1 flex-1 relative z-10 pb-1.5 border-t border-border/20 pt-2 flex bg-secondary/5",
-        totalStarsCount > 12 ? "gap-0.5" : "gap-1"
-      )}>
+      {/* Minor Stars Section */}
+      <div className="px-1 flex-1 relative z-10 pb-1.5 border-t border-border/20 pt-2 flex w-full bg-secondary/5">
         {/* Left container: Good Stars */}
-        <div className={cn(
-          "flex flex-col gap-1",
-          badStars.length === 0 ? "flex-1 grid grid-cols-2 gap-x-1" : "flex-1"
-        )}>
+        <div className="w-[50%] flex flex-col gap-[2px] pr-0.5">
           {goodStars.map((star, idx) => renderStar(star, idx, false, false))}
         </div>
 
         {/* Right container: Bad Stars */}
-        {badStars.length > 0 && (
-          <div className={cn(
-            "flex flex-col gap-1 text-right border-l border-border/20 flex-[1.1]",
-            totalStarsCount > 12 ? "pl-1" : "pl-1.5",
-            goodStars.length === 0 && "grid grid-cols-2 gap-x-1 text-left border-l-0 pl-0"
-          )}>
-            {badStars.map((star, idx) => renderStar(star, idx, false, goodStars.length > 0))}
-          </div>
-        )}
+        <div className="w-[50%] flex flex-col gap-[2px] pl-0.5 text-right border-l border-border/20">
+          {badStars.map((star, idx) => renderStar(star, idx, false, true))}
+        </div>
       </div>
 
       {/* Footer: Tràng Sinh, Decadal, Small Luck */}
-      <div className="mt-auto border-t border-border/50 bg-secondary/40 px-2 py-1 flex justify-between items-center relative z-10 text-[9px]">
-        <span className="font-bold text-primary uppercase tracking-[0.2em]">
-          {palace.changsheng12}
-        </span>
+      <div className="mt-auto border-t border-border/50 bg-secondary/40 px-2 py-0.5 flex justify-between items-center relative z-10 text-[9px]">
+        <div className="flex items-center gap-1.5 h-4">
+           <span className="font-black text-primary uppercase tracking-[0.2em] leading-none">
+             {palace.changsheng12}
+           </span>
+        </div>
         <div className="flex gap-2">
           <span className="font-mono font-bold text-muted-foreground/40">
             {palace.decadalRange[0]}

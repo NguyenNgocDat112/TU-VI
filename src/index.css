@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,100..900;1,100..900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,100..900;1,100..900&family=Lora:ital,wght@0,400..700;1,400..700&display=swap');
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
@@ -6,7 +6,7 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-    --font-heading: 'Inter', sans-serif;
+    --font-heading: 'Lora', serif;
     --font-sans: 'Inter', sans-serif;
     --font-mono: 'Inter', sans-serif;
     --color-sidebar-ring: var(--sidebar-ring);
@@ -113,6 +113,18 @@
     @apply bg-white/80 border border-border backdrop-blur-md;
 }
 
+@layer base {
+  .export-mode * {
+    transition: none !important;
+    animation: none !important;
+    backdrop-filter: none !important;
+  }
+  
+  .export-mode .glass-panel {
+    background-color: white !important;
+  }
+}
+
 @utility mystical-border {
     border: 1px solid var(--border);
     transition: all 0.3s ease;
@@ -151,9 +163,10 @@
   grid-template-rows: repeat(4, 1fr);
   width: 100%;
   margin: 0 auto;
-  border: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  border-top: 1px solid var(--border);
   background-color: var(--card);
-  gap: 1.5px;
+  gap: 0;
 }
 
 .tuvi-cell {
