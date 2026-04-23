@@ -77,46 +77,80 @@ export default function App() {
   const isAdmin = user?.email === ADMIN_EMAIL;
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const isFacebookApp = () => {
-    const ua = navigator.userAgent || navigator.vendor || (window as any).opera;
-    return (ua.indexOf("FBAN") > -1) || (ua.indexOf("FBAV") > -1) || (ua.indexOf("Instagram") > -1) || (ua.indexOf("Threads") > -1);
+  const isEmbeddedBrowser = () => {
+    const ua = navigator.userAgent.toLowerCase() || navigator.vendor?.toLowerCase() || (window as any).opera?.toLowerCase();
+    return (
+      ua.includes("fban") || 
+      ua.includes("fbav") || 
+      ua.includes("instagram") || 
+      ua.includes("threads") ||
+      ua.includes("messenger") ||
+      ua.includes("zalo") ||
+      ua.includes("bytedance")
+    );
   };
 
   const handleLogin = async () => {
     if (isLoggingIn) return;
     
-    // Google strict security policy (Disallowed User Agent) prevents login inside Facebook/Instagram WebView
-    if (isFacebookApp()) {
+    if (isEmbeddedBrowser()) {
       window.dispatchEvent(new CustomEvent('app-notification', { 
-        detail: { message: "Google không cho phép đăng nhập trong ứng dụng này. Vui lòng bấm vào dấu 3 chấm góc phải và chọn 'Mở bằng trình duyệt' (Safari/Chrome).", type: 'error' } 
+        detail: { message: "Google chặn đăng nhập trong Zalo/Messenger/FB. Vui lòng bấm dấu 3 chấm ⋯ -> Chọn 'Mở bằng trình duyệt' (Safari/Chrome).", type: 'error' } 
       }));
       return;
     }
 
     setIsLoggingIn(true);
     try {
-      // Switched to signInWithRedirect to support Safari ITP
-      await signInWithRedirect(auth, googleProvider);
-    } catch (error: any) {
-      console.error("Login initialize error:", error);
+      // Ưu tiên dùng Popup vì trải nghiệm tốt nhất
+      await signInWithPopup(auth, googleProvider);
       setIsLoggingIn(false);
-      window.dispatchEvent(new CustomEvent('app-notification', { 
-        detail: { message: "Không thể mở trang đăng nhập. Vui lòng thử lại bằng trình duyệt Safari/Chrome.", type: 'error' } 
-      }));
+    } catch (error: any) {
+      console.error("Popup login error:", error);
+      
+      // Nếu Popup bị trình duyệt chặn (như trên Safari hoặc Mobile), tự động Fallback sang Redirect
+      if (error.code === 'auth/popup-blocked' || error.code === 'auth/cancelled-popup-request') {
+        window.dispatchEvent(new CustomEvent('app-notification', { 
+          detail: { message: "Đang chuyển hướng sang trang đăng nhập...", type: 'info' } 
+        }));
+        try {
+          await signInWithRedirect(auth, googleProvider);
+        } catch (redirectError: any) {
+          setIsLoggingIn(false);
+          window.dispatchEvent(new CustomEvent('app-notification', { 
+            detail: { message: "Lỗi chuyển hướng đăng nhập. Vui lòng thử lại.", type: 'error' } 
+          }));
+        }
+      } else {
+        setIsLoggingIn(false);
+        if (error.code === 'auth/unauthorized-domain') {
+          window.dispatchEvent(new CustomEvent('app-notification', { 
+            detail: { message: "Lỗi cấu hình: Domain web chưa được ủy quyền trên Firebase.", type: 'error' } 
+          }));
+        } else if (error.code !== 'auth/popup-closed-by-user') {
+          window.dispatchEvent(new CustomEvent('app-notification', { 
+            detail: { message: "Có lỗi xảy ra khi đăng nhập: " + error.message, type: 'error' } 
+          }));
+        }
+      }
     }
   };
 
-  // Check for redirect results on component mount
+  // Lắng nghe kết quả nếu có Redirect trả về
   useEffect(() => {
-    getRedirectResult(auth).catch((error) => {
-      console.error("Login redirect error:", error);
-      setIsLoggingIn(false);
-      if (error.code === 'auth/unauthorized-domain') {
-        window.dispatchEvent(new CustomEvent('app-notification', { 
-          detail: { message: "Lỗi cấu hình: Domain web chưa được ủy quyền trên Server.", type: 'error' } 
-        }));
-      }
-    });
+    getRedirectResult(auth)
+      .then(() => {
+        setIsLoggingIn(false); // Reset trạng thái nếu redirect thành công hoặc null
+      })
+      .catch((error) => {
+        console.error("Login redirect error:", error);
+        setIsLoggingIn(false);
+        if (error.code === 'auth/unauthorized-domain') {
+          window.dispatchEvent(new CustomEvent('app-notification', { 
+            detail: { message: "Lỗi cấu hình: Domain web chưa được ủy quyền trên Server.", type: 'error' } 
+          }));
+        }
+      });
   }, []);
 
   useEffect(() => {
