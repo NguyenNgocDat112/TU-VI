@@ -18,11 +18,34 @@ export function notifyUser(message: string, type: 'error' | 'info' = 'error') {
   }
 }
 
-async function callOpenRouter(prompt: string, attempt = 0): Promise<string> {
+/**
+ * Lấy ngẫu nhiên 1 API key từ danh sách tối đa 5 key
+ */
+function getRandomApiKey(baseName: string): string | undefined {
   const metaEnv = (import.meta as any).env;
-  const apiKey = (metaEnv?.VITE_OPENROUTER_API_KEY) || 
-                 (process.env.VITE_OPENROUTER_API_KEY) || 
-                 (process.env.OPENROUTER_API_KEY);
+  const keys: string[] = [];
+
+  // Key gốc: VITE_GEMINI_API_KEY
+  const baseKey = metaEnv?.[`VITE_${baseName}`] || 
+                  (typeof process !== 'undefined' ? process.env[`VITE_${baseName}`] || process.env[baseName] : undefined);
+  if (baseKey) keys.push(baseKey);
+
+  // Mở rộng thêm 5 variants: VITE_GEMINI_API_KEY_1 đến 5
+  for (let i = 1; i <= 5; i++) {
+    const k = metaEnv?.[`VITE_${baseName}_${i}`] || 
+              (typeof process !== 'undefined' ? process.env[`VITE_${baseName}_${i}`] || process.env[`${baseName}_${i}`] : undefined);
+    if (k) keys.push(k);
+  }
+
+  if (keys.length === 0) return undefined;
+  
+  // Rotate/Randomize key usage
+  const randomIndex = Math.floor(Math.random() * keys.length);
+  return keys[randomIndex];
+}
+
+async function callOpenRouter(prompt: string, attempt = 0): Promise<string> {
+  const apiKey = getRandomApiKey('OPENROUTER_API_KEY');
                  
   if (!apiKey) {
     console.warn('OpenRouter API key is missing, fallback unavailable.');
@@ -79,11 +102,8 @@ async function callOpenRouter(prompt: string, attempt = 0): Promise<string> {
 }
 
 export async function getAICompletion(prompt: string, attempt = 0): Promise<string> {
-  const geminiKey = process.env.GEMINI_API_KEY;
-  const metaEnv = (import.meta as any).env;
-  const openRouterKey = (metaEnv?.VITE_OPENROUTER_API_KEY) || 
-                        (process.env.VITE_OPENROUTER_API_KEY) || 
-                        (process.env.OPENROUTER_API_KEY);
+  const geminiKey = getRandomApiKey('GEMINI_API_KEY');
+  const openRouterKey = getRandomApiKey('OPENROUTER_API_KEY');
 
   // Ưu tiên Gemini API trực tiếp (thường ổn định hơn trong môi trường này)
   if (geminiKey) {
