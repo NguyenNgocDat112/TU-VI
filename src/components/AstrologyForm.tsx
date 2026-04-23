@@ -237,6 +237,7 @@ export function AstrologyForm({ onSubmit, initialData, compact }: Props) {
         <div className="pt-1">
           <Button 
             type="submit" 
+            onClick={() => window.open('https://s.shopee.vn/3B3hylyYvP', '_blank')}
             className="w-full bg-primary hover:bg-primary/90 text-white font-heading font-extrabold shadow-lg shadow-primary/10 transition-all active:scale-[0.98] uppercase tracking-[0.05em] text-[11px] md:text-sm rounded-[6px] h-12"
           >
             Lập Lá Số & Giải Mã AI
