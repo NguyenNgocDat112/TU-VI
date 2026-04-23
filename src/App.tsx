@@ -21,7 +21,7 @@ import { getAICompletion } from './lib/aiService';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { auth, googleProvider, db } from './lib/firebase';
-import { signInWithRedirect, getRedirectResult, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 // --- Types & Constants ---
