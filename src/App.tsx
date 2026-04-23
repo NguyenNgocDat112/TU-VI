@@ -77,11 +77,25 @@ export default function App() {
   const isAdmin = user?.email === ADMIN_EMAIL;
   const dropdownRef = useRef<HTMLDivElement>(null);
 
+  const isFacebookApp = () => {
+    const ua = navigator.userAgent || navigator.vendor || (window as any).opera;
+    return (ua.indexOf("FBAN") > -1) || (ua.indexOf("FBAV") > -1) || (ua.indexOf("Instagram") > -1) || (ua.indexOf("Threads") > -1);
+  };
+
   const handleLogin = async () => {
     if (isLoggingIn) return;
+    
+    // Google strict security policy (Disallowed User Agent) prevents login inside Facebook/Instagram WebView
+    if (isFacebookApp()) {
+      window.dispatchEvent(new CustomEvent('app-notification', { 
+        detail: { message: "Google không cho phép đăng nhập trong ứng dụng này. Vui lòng bấm vào dấu 3 chấm góc phải và chọn 'Mở bằng trình duyệt' (Safari/Chrome).", type: 'error' } 
+      }));
+      return;
+    }
+
     setIsLoggingIn(true);
     try {
-      // Switched to signInWithRedirect to support in-app browsers like Facebook, Zalo, Threads, and Safari ITP
+      // Switched to signInWithRedirect to support Safari ITP
       await signInWithRedirect(auth, googleProvider);
     } catch (error: any) {
       console.error("Login initialize error:", error);
