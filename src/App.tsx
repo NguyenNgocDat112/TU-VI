@@ -21,7 +21,7 @@ import { getAICompletion } from './lib/aiService';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { auth, googleProvider, db } from './lib/firebase';
-import { signInWithPopup, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { signInWithRedirect, getRedirectResult, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 // --- Types & Constants ---
@@ -81,27 +81,29 @@ export default function App() {
     if (isLoggingIn) return;
     setIsLoggingIn(true);
     try {
-      await signInWithPopup(auth, googleProvider);
+      // Switched to signInWithRedirect to support in-app browsers like Facebook, Zalo, Threads, and Safari ITP
+      await signInWithRedirect(auth, googleProvider);
     } catch (error: any) {
-      console.error("Login error:", error);
-      let message = "Có lỗi xảy ra khi đăng nhập.";
-      
-      if (error.code === 'auth/popup-blocked') {
-        message = "Trình duyệt đã chặn cửa sổ đăng nhập. Vui lòng bật popup cho trang này và thử lại.";
-      } else if (error.code === 'auth/cancelled-popup-request') {
-        // This one can be ignored as it's usually a double-click
-        return;
-      } else if (error.code === 'auth/popup-closed-by-user') {
-        message = "Bạn đã đóng cửa sổ đăng nhập.";
-      }
-      
-      window.dispatchEvent(new CustomEvent('app-notification', { 
-        detail: { message, type: 'error' } 
-      }));
-    } finally {
+      console.error("Login initialize error:", error);
       setIsLoggingIn(false);
+      window.dispatchEvent(new CustomEvent('app-notification', { 
+        detail: { message: "Không thể mở trang đăng nhập. Vui lòng thử lại bằng trình duyệt Safari/Chrome.", type: 'error' } 
+      }));
     }
   };
+
+  // Check for redirect results on component mount
+  useEffect(() => {
+    getRedirectResult(auth).catch((error) => {
+      console.error("Login redirect error:", error);
+      setIsLoggingIn(false);
+      if (error.code === 'auth/unauthorized-domain') {
+        window.dispatchEvent(new CustomEvent('app-notification', { 
+          detail: { message: "Lỗi cấu hình: Domain web chưa được ủy quyền trên Server.", type: 'error' } 
+        }));
+      }
+    });
+  }, []);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
