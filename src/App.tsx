@@ -1170,9 +1170,9 @@ function LandingView({ onStart, historyList = [], user }: { onStart: (data: any,
                </div>
                <div className="pt-4 md:pt-6 border-t border-slate-200/50 flex flex-wrap gap-4 items-center justify-between md:pr-6">
                   <div className="flex flex-wrap gap-3 md:gap-6 text-[10px] md:text-[11px] font-bold text-slate-400">
-                    <span className="hover:text-primary transition-all cursor-pointer flex items-center gap-2">FACEBOOK</span>
-                    <span className="hover:text-primary transition-all cursor-pointer flex items-center gap-2">TIKTOK</span>
-                    <span className="hover:text-primary transition-all cursor-pointer flex items-center gap-2">ZALO</span>
+                    <span onClick={() => window.open('https://www.facebook.com/son.hung.1848816', '_blank')} className="hover:text-primary transition-all cursor-pointer flex items-center gap-2">FACEBOOK</span>
+                    <span onClick={() => window.open('https://s.shopee.vn/3qJOnuHnAJ', '_blank')} className="hover:text-primary transition-all cursor-pointer flex items-center gap-2">TIKTOK</span>
+                    <span onClick={() => window.open('https://zalo.me/0363716797', '_blank')} className="hover:text-primary transition-all cursor-pointer flex items-center gap-2">ZALO</span>
                   </div>
                   <div className="flex -space-x-2">
                     {[1,2,3].map(i => (
@@ -1625,11 +1625,21 @@ function AdminDashboard({ onBack }: { onBack: () => void }) {
     }
   };
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const usersPerPage = 10;
+  
   const filteredUsers = users.filter(u => 
     (u.email?.toLowerCase().includes(searchTerm.toLowerCase())) ||
     (u.displayName?.toLowerCase().includes(searchTerm.toLowerCase())) ||
     (u.uid?.includes(searchTerm))
   );
+
+  const paginatedUsers = filteredUsers.slice(
+    (currentPage - 1) * usersPerPage,
+    currentPage * usersPerPage
+  );
+  
+  const totalPages = Math.ceil(filteredUsers.length / usersPerPage);
 
   const keysInfo = useMemo(() => getAvailableApiKeysInfo(), []);
 
@@ -1785,7 +1795,7 @@ function AdminDashboard({ onBack }: { onBack: () => void }) {
                   <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground font-medium">Không tìm thấy bản ghi nào khớp với nội dung tìm kiếm.</td>
                 </tr>
               ) : (
-                filteredUsers.map((u) => (
+                paginatedUsers.map((u) => (
                   <tr key={u.id} className="hover:bg-slate-50/50 transition-colors group">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
@@ -1870,6 +1880,14 @@ function AdminDashboard({ onBack }: { onBack: () => void }) {
             </tbody>
           </table>
         </div>
+        
+        {totalPages > 1 && (
+          <div className="p-4 flex items-center justify-center gap-2 border-t border-border">
+            <Button variant="outline" size="sm" onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))} disabled={currentPage === 1}>Trước</Button>
+            <span className="text-xs font-bold text-muted-foreground">Trang {currentPage} / {totalPages}</span>
+            <Button variant="outline" size="sm" onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))} disabled={currentPage === totalPages}>Sau</Button>
+          </div>
+        )}
         </>
         ) : (
           <div className="overflow-x-auto">
@@ -2257,7 +2275,9 @@ function ResultView({
                    <div className="px-2 py-0.5 bg-primary/10 text-primary text-[9px] font-black rounded-full border border-primary/20 uppercase tracking-[0.2em]">
                       CHIÊM CÁT VẬN MỆNH
                    </div>
-                   <h2 className="text-[18px] md:text-xl font-heading font-black text-foreground uppercase tracking-tight">Thánh Nhân Giải Mã</h2>
+                   <h2 className="text-[18px] md:text-xl font-heading font-black text-foreground uppercase tracking-tight flex items-center gap-2">
+                       <Sparkles className="w-5 h-5 text-primary" /> Luận giải chi tiết 12 cung
+                   </h2>
                    <p className="text-muted-foreground text-[12px] md:text-sm max-w-md leading-tight">
                       Luận giải chi tiết 12 cung số từ trí tuệ nhân tạo.
                    </p>
