@@ -9,7 +9,7 @@ import { Button } from '../components/ui/button';
 import { 
   ChevronLeft, ChevronDown, Sparkles, Moon, Sun, User, Users, Heart, Baby, Coins, ShieldAlert, Plane, Briefcase, Home, GraduationCap, Users2, Info, Star, Shield, X, Bot, Loader2,
   Lock, ArrowRight, Check, Zap, MessageSquare, Share2, Download, Calendar, ImageIcon, FileText,
-  Handshake, Target, Compass, Brain, Activity, Trees, Quote
+  Handshake, Target, Compass, Brain, Activity, Trees, Quote, Key
 } from 'lucide-react';
 import { TooltipProvider } from '../components/ui/tooltip';
 import { cn } from '../lib/utils';
@@ -17,7 +17,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '../components/ui/dialog';
 import { STAR_MEANINGS, MINOR_STAR_MEANINGS, TU_HOA_MEANINGS } from './lib/starMeanings';
-import { getAICompletion } from './lib/aiService';
+import { getAICompletion, getAvailableApiKeysInfo } from './lib/aiService';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { auth, googleProvider, db } from './lib/firebase';
@@ -102,57 +102,29 @@ export default function App() {
 
     setIsLoggingIn(true);
     try {
-      // Ưu tiên dùng Popup vì trải nghiệm tốt nhất
       await signInWithPopup(auth, googleProvider);
-      setIsLoggingIn(false);
     } catch (error: any) {
       console.error("Popup login error:", error);
       
-      // Nếu Popup bị trình duyệt chặn (như trên Safari hoặc Mobile), tự động Fallback sang Redirect
-      if (error.code === 'auth/popup-blocked' || error.code === 'auth/cancelled-popup-request') {
+      if (error.code === 'auth/popup-blocked') {
         window.dispatchEvent(new CustomEvent('app-notification', { 
-          detail: { message: "Đang chuyển hướng sang trang đăng nhập...", type: 'info' } 
+          detail: { message: "Trình duyệt đang chặn cửa sổ đăng nhập. Vui lòng Tắt chặn Pop-up hoặc làm mới trang.", type: 'error' } 
         }));
-        try {
-          await signInWithRedirect(auth, googleProvider);
-        } catch (redirectError: any) {
-          setIsLoggingIn(false);
-          window.dispatchEvent(new CustomEvent('app-notification', { 
-            detail: { message: "Lỗi chuyển hướng đăng nhập. Vui lòng thử lại.", type: 'error' } 
-          }));
-        }
-      } else {
-        setIsLoggingIn(false);
-        if (error.code === 'auth/unauthorized-domain') {
-          window.dispatchEvent(new CustomEvent('app-notification', { 
-            detail: { message: "Lỗi cấu hình: Domain web chưa được ủy quyền trên Firebase.", type: 'error' } 
-          }));
-        } else if (error.code !== 'auth/popup-closed-by-user') {
-          window.dispatchEvent(new CustomEvent('app-notification', { 
-            detail: { message: "Có lỗi xảy ra khi đăng nhập: " + error.message, type: 'error' } 
-          }));
-        }
+      } else if (error.code === 'auth/unauthorized-domain') {
+        window.dispatchEvent(new CustomEvent('app-notification', { 
+          detail: { message: "Lỗi cấu hình: Domain web chưa được ủy quyền trên Firebase.", type: 'error' } 
+        }));
+      } else if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/cancelled-popup-request') {
+        window.dispatchEvent(new CustomEvent('app-notification', { 
+          detail: { message: "Có lỗi xảy ra khi đăng nhập: " + error.message, type: 'error' } 
+        }));
       }
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
-  // Lắng nghe kết quả nếu có Redirect trả về
-  useEffect(() => {
-    getRedirectResult(auth)
-      .then(() => {
-        setIsLoggingIn(false); // Reset trạng thái nếu redirect thành công hoặc null
-      })
-      .catch((error) => {
-        console.error("Login redirect error:", error);
-        setIsLoggingIn(false);
-        if (error.code === 'auth/unauthorized-domain') {
-          window.dispatchEvent(new CustomEvent('app-notification', { 
-            detail: { message: "Lỗi cấu hình: Domain web chưa được ủy quyền trên Server.", type: 'error' } 
-          }));
-        }
-      });
-  }, []);
-
+  // Listen for auth state changes
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -183,6 +155,8 @@ export default function App() {
           if (snapshot.exists()) {
             setUserData(snapshot.data());
           }
+        }, (error) => {
+          console.warn("Lỗi đồng bộ dữ liệu người dùng (có thể do phiên đăng nhập hết hạn):", error.message);
         });
 
         // Set/update initial info
@@ -252,6 +226,7 @@ export default function App() {
 
   // AI related states
   const [palaceInterpretations, setPalaceInterpretations] = useState<Record<string, string>>({});
+  const [isAffiliateOpened, setIsAffiliateOpened] = useState(false);
   const [isGeneratingTabAI, setIsGeneratingTabAI] = useState(false);
   const [interpretingPalace, setInterpretingPalace] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<{id: number, message: string, type: 'error' | 'info'}[]>([]);
@@ -306,6 +281,7 @@ export default function App() {
       setBirthInfo(data);
       setSelectedPalaceIndex(chart.menhIdx);
       setActiveTab('Mệnh');
+      setIsAffiliateOpened(false);
       
       // Chỉ xoá luận giải nếu không phải mở từ lịch sử
       if (!isFromHistory) {
@@ -346,6 +322,7 @@ export default function App() {
     setBirthInfo(null);
     setView('landing');
     setPalaceInterpretations({});
+    setIsAffiliateOpened(false);
   };
 
   const generateTabInterpretation = async (palaceName: string) => {
@@ -799,8 +776,20 @@ ${luuTuHoaStr}
                   palaceInterpretations={palaceInterpretations}
                   isGenerating={isGeneratingTabAI}
                   interpretingPalace={interpretingPalace}
-                  onGenerate={(pName: string) => generateTabInterpretation(pName)}
-                  onGenerateAll={generateAllInterpretations}
+                  onGenerate={(pName: string) => {
+                    if ((pName === 'Mệnh' || pName === 'Phu Thê') && !isAffiliateOpened) {
+                      window.open('https://s.shopee.vn/3LN896Yl2Q', '_blank');
+                      setIsAffiliateOpened(true);
+                    }
+                    generateTabInterpretation(pName);
+                  }}
+                  onGenerateAll={() => {
+                    if (!isAffiliateOpened) {
+                      window.open('https://s.shopee.vn/3LN896Yl2Q', '_blank');
+                      setIsAffiliateOpened(true);
+                    }
+                    generateAllInterpretations();
+                  }}
                   isSubscribed={isSubscribed}
                   onSubscribe={() => setIsSubscribed(true)}
                   onPalaceClick={(idx: number) => {
@@ -1527,8 +1516,12 @@ function LandingView({ onStart, historyList = [], user }: { onStart: (data: any,
 }
 
 function AdminDashboard({ onBack }: { onBack: () => void }) {
+  const [activeTab, setActiveTab] = useState<'users' | 'alerts'>('users');
   const [users, setUsers] = useState<any[]>([]);
+  const [alerts, setAlerts] = useState<any[]>([]);
+  const [keyStats, setKeyStats] = useState<Record<string, any>>({});
   const [isLoading, setIsLoading] = useState(true);
+  const [isAlertsLoading, setIsAlertsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
@@ -1540,6 +1533,18 @@ function AdminDashboard({ onBack }: { onBack: () => void }) {
     window.dispatchEvent(new CustomEvent('app-notification', { 
       detail: { message, type } 
     }));
+  };
+
+  const fetchKeyStats = async () => {
+    try {
+      const { collection, getDocs } = await import('firebase/firestore');
+      const snap = await getDocs(collection(db, 'api_key_usage'));
+      const stats: Record<string, any> = {};
+      snap.forEach(d => { stats[d.id] = d.data(); });
+      setKeyStats(stats);
+    } catch (err) {
+      console.error("Lỗi fetch key stats:", err);
+    }
   };
 
   const fetchUsers = async () => {
@@ -1560,9 +1565,25 @@ function AdminDashboard({ onBack }: { onBack: () => void }) {
     }
   };
 
+  const fetchAlerts = async () => {
+    setIsAlertsLoading(true);
+    try {
+      const { collection, getDocs, query, orderBy } = await import('firebase/firestore');
+      const q = query(collection(db, 'admin_alerts'), orderBy('timestamp', 'desc'));
+      const snapshot = await getDocs(q);
+      setAlerts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      fetchKeyStats();
+    } catch (error) {
+      console.error("Error fetching admin alerts:", error);
+    } finally {
+      setIsAlertsLoading(false);
+    }
+  };
+
   useEffect(() => {
-    fetchUsers();
-  }, []);
+    if (activeTab === 'users') fetchUsers();
+    else if (activeTab === 'alerts') fetchAlerts();
+  }, [activeTab]);
 
   const handleUpdateUserDetails = async () => {
     if (!selectedUser) return;
@@ -1622,6 +1643,22 @@ function AdminDashboard({ onBack }: { onBack: () => void }) {
     (u.uid?.includes(searchTerm))
   );
 
+  const keysInfo = useMemo(() => getAvailableApiKeysInfo(), []);
+
+  const handleResolveAlert = async (alertId: string, currentState: boolean) => {
+    try {
+      const { doc, updateDoc } = await import('firebase/firestore');
+      await updateDoc(doc(db, 'admin_alerts', alertId), {
+        resolved: !currentState
+      });
+      notify('Đã cập nhật trạng thái', 'success');
+      fetchAlerts();
+    } catch (error) {
+      console.error("Error updating alert:", error);
+      notify('Lỗi cập nhật trạng thái', 'error');
+    }
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0 }}
@@ -1638,19 +1675,89 @@ function AdminDashboard({ onBack }: { onBack: () => void }) {
           </h1>
         </div>
         <div className="flex items-center gap-6">
-          <div className="text-right">
+          <div className="text-right hidden sm:block">
             <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Tổng Users</p>
             <p className="text-xl font-black text-primary leading-none">{users.length}</p>
           </div>
-          <Button onClick={fetchUsers} size="icon" variant="outline" className="rounded-xl h-10 w-10 border-border hover:bg-slate-50">
-            <Activity className={cn("w-5 h-5", isLoading ? "animate-spin text-primary" : "text-slate-400")} />
+          <Button onClick={() => activeTab === 'users' ? fetchUsers() : fetchAlerts()} size="icon" variant="outline" className="rounded-xl h-10 w-10 border-border hover:bg-slate-50">
+            <Activity className={cn("w-5 h-5", (activeTab === 'users' ? isLoading : isAlertsLoading) ? "animate-spin text-primary" : "text-slate-400")} />
           </Button>
         </div>
       </div>
 
+      <div className="flex gap-4 mb-6">
+        <Button 
+          variant={activeTab === 'users' ? 'default' : 'outline'}
+          onClick={() => setActiveTab('users')}
+          className={cn("rounded-xl font-bold", activeTab === 'users' ? "bg-primary text-white" : "border-border")}
+        >
+          <Users className="w-4 h-4 mr-2" />
+          Người dùng
+        </Button>
+        <Button 
+          variant={activeTab === 'alerts' ? 'default' : 'outline'}
+          onClick={() => setActiveTab('alerts')}
+          className={cn("rounded-xl font-bold relative", activeTab === 'alerts' ? "bg-red-500 hover:bg-red-600 text-white border-red-500" : "border-border")}
+        >
+          <ShieldAlert className="w-4 h-4 mr-2" />
+          Giám sát tài nguyên AI
+          {alerts.filter(a => !a.resolved).length > 0 && (
+            <span className="absolute -top-2 -right-2 w-5 h-5 bg-white text-red-600 border-2 border-red-500 rounded-full text-[10px] flex items-center justify-center font-black animate-bounce shadow-sm">
+              {alerts.filter(a => !a.resolved).length}
+            </span>
+          )}
+        </Button>
+      </div>
+
+      {activeTab === 'alerts' && (
+        <div className="mb-6 bg-white p-6 rounded-3xl border border-border shadow-sm">
+          <h3 className="text-sm font-bold flex items-center gap-2 mb-4 text-foreground/80"><Key className="w-4 h-4 text-primary" /> API KEYS ĐANG HOẠT ĐỘNG ({keysInfo.length})</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            {keysInfo.map(k => {
+              const stats = keyStats[k.id] || { totalUses: 0, dailyUses: {} };
+              const todayStr = new Date().toISOString().split('T')[0];
+              const todayUses = stats.dailyUses?.[todayStr] || 0;
+              return (
+                <div key={k.id} className="flex flex-col p-3 rounded-2xl bg-secondary/20 border border-border shadow-sm">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-[10px] font-black tracking-widest uppercase text-slate-500">{k.provider}</span>
+                    <span className="flex h-2 w-2 relative">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                  </div>
+                  <span className="text-xs font-bold text-foreground mb-1 truncate" title={k.id}>{k.id.replace('VITE_', '')}</span>
+                  <code className="text-[10px] text-slate-400 bg-white px-2 py-1 rounded-lg border border-border flex items-center mt-1">
+                    {k.masked}
+                  </code>
+                  <div className="mt-3 pt-3 border-t border-border flex justify-between items-center text-[10px] uppercase tracking-widest font-bold">
+                    <div className="flex flex-col text-slate-500">
+                      <span>Hôm nay</span>
+                      <span className={cn("text-sm", todayUses > 1000 ? "text-red-500" : "text-emerald-600")}>{todayUses}</span>
+                    </div>
+                    <div className="flex flex-col text-right text-slate-500">
+                      <span>Tổng cộng</span>
+                      <span className="text-sm text-foreground">{stats.totalUses}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {keysInfo.length === 0 && (
+              <div className="col-span-full p-4 rounded-2xl bg-red-50 border border-red-100 flex items-center gap-3">
+                <ShieldAlert className="w-5 h-5 text-red-500" />
+                <p className="text-sm font-bold text-red-600">Chưa có API Key (Gemini/OpenRouter) nào được cấu hình trong Hệ thống!</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="bg-white rounded-3xl border border-border shadow-xl overflow-hidden">
-        <div className="p-6 border-b border-border bg-secondary/10 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="relative flex-1 max-w-md">
+        {activeTab === 'users' ? (
+          <>
+          <div className="p-6 border-b border-border bg-secondary/10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="relative flex-1 max-w-md">
             <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <input 
               type="text" 
@@ -1775,6 +1882,78 @@ function AdminDashboard({ onBack }: { onBack: () => void }) {
             </tbody>
           </table>
         </div>
+        </>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-secondary/5 border-b border-border">
+                  <th className="px-6 py-4 text-[10px] font-black uppercase text-muted-foreground tracking-widest">Thời gian</th>
+                  <th className="px-6 py-4 text-[10px] font-black uppercase text-muted-foreground tracking-widest">Tài nguyên (Key) / Loại lỗi</th>
+                  <th className="px-6 py-4 text-[10px] font-black uppercase text-muted-foreground tracking-widest">Chi tiết thông báo hệ thống</th>
+                  <th className="px-6 py-4 text-[10px] font-black uppercase text-muted-foreground tracking-widest text-right">Trạng thái</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/50">
+                {isAlertsLoading ? (
+                  <tr>
+                    <td colSpan={4} className="px-6 py-12 text-center text-muted-foreground">
+                      <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2 text-red-500" />
+                      <p className="font-bold text-sm tracking-tight uppercase">Đang tải lịch sử cảnh báo...</p>
+                    </td>
+                  </tr>
+                ) : alerts.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-6 py-12 text-center text-emerald-600 font-medium bg-emerald-50/50">
+                      <Shield className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                      Hệ thống hoạt động ổn định. Không có cảnh báo tràn RAM/Quota.
+                    </td>
+                  </tr>
+                ) : (
+                  alerts.map((a) => (
+                    <tr key={a.id} className={cn("hover:bg-slate-50/50 transition-colors", !a.resolved ? "bg-red-50/30" : "")}>
+                      <td className="px-6 py-4">
+                        <p className="text-xs font-bold text-slate-500 flex items-center gap-1.5 opacity-80">
+                          <Calendar className="w-3.5 h-3.5" />
+                          {a.timestamp?.toDate?.() ? a.timestamp.toDate().toLocaleString('vi-VN') : 'Vừa xong'}
+                        </p>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex flex-col gap-1.5 items-start">
+                          {a.keyUsed && a.keyUsed !== 'Unknown' && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded border text-[9px] font-black uppercase tracking-widest bg-slate-800 text-white border-slate-700">
+                              KEY: {a.keyUsed}
+                            </span>
+                          )}
+                          <span className={cn(
+                            "inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest",
+                            a.type === 'MISSING_KEYS' ? "bg-orange-100 text-orange-700 font-bold" : "bg-red-100 text-red-700"
+                          )}>
+                            {a.type || 'LỖI HỆ THỐNG'}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <p className="text-sm font-medium text-foreground opacity-90 break-words line-clamp-2" title={a.error}>{a.error}</p>
+                      </td>
+                      <td className="px-6 py-4 text-right align-middle">
+                        <Button
+                          variant={a.resolved ? "outline" : "default"}
+                          size="sm"
+                          onClick={() => handleResolveAlert(a.id, a.resolved)}
+                          className={cn("h-8 rounded-lg text-xs font-bold border-border whitespace-nowrap", a.resolved ? "opacity-50 hover:opacity-100 border-transparent" : "bg-red-500 hover:bg-red-600 text-white border-0")}
+                        >
+                          {a.resolved ? <Check className="w-3 h-3 mr-1" /> : <ShieldAlert className="w-3 h-3 mr-1" />}
+                          {a.resolved ? 'Đã xử lý' : 'Đánh dấu xử lý'}
+                        </Button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* User Info Dialog */}
@@ -2135,7 +2314,11 @@ function ResultView({
                               
                               {!interpretation ? (
                                  <Button 
-                                   onClick={() => { setActiveTab(pName); onGenerate(pName); if (!isExpanded) togglePalace(pName); }}
+                                   onClick={() => {
+                                     setActiveTab(pName);
+                                     onGenerate(pName);
+                                     if (!isExpanded) togglePalace(pName);
+                                   }}
                                    disabled={isGenerating}
                                    size="sm"
                                    className="h-8 px-4 bg-primary text-white rounded-lg text-[11px] font-black flex items-center gap-1 shadow-lg hover:scale-105 transition-transform shrink-0"

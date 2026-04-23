@@ -56,6 +56,21 @@ service cloud.firestore {
 
     // --- MATCH BLOCKS ---
 
+    match /api_key_usage/{keyId} {
+      allow read: if isAdmin();
+      allow write: if isSignedIn();
+    }
+
+    match /admin_alerts/{alertId} {
+      allow create: if incoming().keys().hasAll(['type', 'error', 'timestamp', 'resolved'])
+                    && isString(incoming().type, 100)
+                    && isString(incoming().error, 5000)
+                    && (!incoming().keys().hasAny(['keyUsed']) || isString(incoming().keyUsed, 256))
+                    && incoming().timestamp is timestamp
+                    && isBool(incoming().resolved);
+      allow read, update, delete: if isAdmin();
+    }
+
     match /users/{userId} {
       allow get: if isOwner(userId);
       allow list: if isAdmin();
