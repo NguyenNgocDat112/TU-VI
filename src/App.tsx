@@ -776,20 +776,8 @@ ${luuTuHoaStr}
                   palaceInterpretations={palaceInterpretations}
                   isGenerating={isGeneratingTabAI}
                   interpretingPalace={interpretingPalace}
-                  onGenerate={(pName: string) => {
-                    if ((pName === 'Mệnh' || pName === 'Phu Thê') && !isAffiliateOpened) {
-                      window.open('https://s.shopee.vn/3LN896Yl2Q', '_blank');
-                      setIsAffiliateOpened(true);
-                    }
-                    generateTabInterpretation(pName);
-                  }}
-                  onGenerateAll={() => {
-                    if (!isAffiliateOpened) {
-                      window.open('https://s.shopee.vn/3LN896Yl2Q', '_blank');
-                      setIsAffiliateOpened(true);
-                    }
-                    generateAllInterpretations();
-                  }}
+                  onGenerate={(pName: string) => generateTabInterpretation(pName)}
+                  onGenerateAll={() => generateAllInterpretations()}
                   isSubscribed={isSubscribed}
                   onSubscribe={() => setIsSubscribed(true)}
                   onPalaceClick={(idx: number) => {
