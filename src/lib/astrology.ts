@@ -485,9 +485,9 @@ function calculateYearlyMutagens(targetYear: number, palaces: Palace[]): { palac
     'Đinh': ['Thái Âm', 'Thiên Đồng', 'Thiên Cơ', 'Cự Môn'],
     'Mậu': ['Tham Lang', 'Thái Âm', 'Hữu Bật', 'Thiên Cơ'],
     'Kỷ': ['Vũ Khúc', 'Tham Lang', 'Thiên Lương', 'Văn Khúc'],
-    'Canh': ['Thái Dương', 'Vũ Khúc', 'Thiên Phủ', 'Thiên Đồng'],
+    'Canh': ['Thái Dương', 'Vũ Khúc', 'Thái Âm', 'Thiên Đồng'],
     'Tân': ['Cự Môn', 'Thái Dương', 'Văn Khúc', 'Văn Xương'],
-    'Nhâm': ['Thiên Lương', 'Tử Vi', 'Thiên Phủ', 'Vũ Khúc'],
+    'Nhâm': ['Thiên Lương', 'Tử Vi', 'Tả Phù', 'Vũ Khúc'],
     'Quý': ['Phá Quân', 'Cự Môn', 'Thái Âm', 'Tham Lang']
   };
 
@@ -617,9 +617,9 @@ function calculateDecadalStars(currentAge: number, astrolabe: any, palaces: Pala
       'Đinh': ['Thái Âm', 'Thiên Đồng', 'Thiên Cơ', 'Cự Môn'],
       'Mậu': ['Tham Lang', 'Thái Âm', 'Hữu Bật', 'Thiên Cơ'],
       'Kỷ': ['Vũ Khúc', 'Tham Lang', 'Thiên Lương', 'Văn Khúc'],
-      'Canh': ['Thái Dương', 'Vũ Khúc', 'Thiên Phủ', 'Thiên Đồng'],
+      'Canh': ['Thái Dương', 'Vũ Khúc', 'Thái Âm', 'Thiên Đồng'],
       'Tân': ['Cự Môn', 'Thái Dương', 'Văn Khúc', 'Văn Xương'],
-      'Nhâm': ['Thiên Lương', 'Tử Vi', 'Thiên Phủ', 'Vũ Khúc'],
+      'Nhâm': ['Thiên Lương', 'Tử Vi', 'Tả Phù', 'Vũ Khúc'],
       'Quý': ['Phá Quân', 'Cự Môn', 'Thái Âm', 'Tham Lang']
     };
 

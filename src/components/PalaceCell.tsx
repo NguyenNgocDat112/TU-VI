@@ -90,12 +90,12 @@ export function PalaceCell({
       )}>
         <span className={cn(
           isMajor ? "font-bold tracking-tighter drop-shadow-sm" : "font-semibold whitespace-nowrap tracking-tighter shrink-0",
-          isMajor ? "text-[14px] uppercase" : "text-[9.5px]" // slightly smaller to fit better
+          isMajor ? "text-[16px] uppercase" : "text-[11.5px]" // increased font sizes
         )}>
           {star.name}
         </span>
         {star.brightness && (
-          <span className={cn("font-bold opacity-80 shrink-0 uppercase", isMajor ? "text-[10px] ml-1" : "text-[8px] ml-0.5")}>
+          <span className={cn("font-bold opacity-80 shrink-0 uppercase", isMajor ? "text-[11px] ml-1" : "text-[9.5px] ml-0.5")}>
             ({star.brightness})
           </span>
         )}
@@ -125,31 +125,31 @@ export function PalaceCell({
     <div 
       onClick={onClick}
       className={cn(
-        "tuvi-cell group hover:bg-slate-50 hover:ring-2 hover:ring-primary/40 transition-all cursor-pointer relative flex flex-col min-h-[240px] border-r border-b border-border bg-white overflow-visible",
+        "tuvi-cell group hover:bg-slate-50 hover:ring-2 hover:ring-primary/40 transition-all cursor-pointer relative flex flex-col min-h-[260px] border-r border-b border-border bg-white overflow-visible",
         isMenh && "bg-primary/5 ring-1 ring-inset ring-primary/40",
         highlight === 'tam-hop' && !isMenh && "bg-primary/5 ring-1 ring-inset ring-primary/20",
         highlight === 'xung-chieu' && "bg-secondary/10 ring-1 ring-inset ring-primary/10"
       )}
     >
       {/* Header: Branch and Palace Name */}
-      <div className="flex justify-between items-start px-2 pt-1 mb-1 relative z-10 border-b border-border/10">
-        <span className="text-[9.5px] font-bold text-muted-foreground uppercase tracking-widest w-6 opacity-30">
+      <div className="flex justify-between items-start px-2 pt-1.5 mb-1 relative z-10 border-b border-border/10 pb-0.5">
+        <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest w-6 opacity-30">
           {palace.branch}
         </span>
-        <div className="text-center flex-1">
+        <div className="text-center flex-1 min-w-0">
           <h3 className={cn(
-            "text-[12px] font-heading font-black uppercase tracking-widest leading-none mb-0.5 shadow-primary/20",
+            "text-[14px] font-heading font-black uppercase tracking-widest leading-none mb-0.5 shadow-primary/20 flex items-center justify-center gap-1",
             getBranchElementColor(palace.branch)
           )}>
-            {palace.name}
+            <span className="whitespace-nowrap">{palace.name}</span>
             {isThan && (
-              <span className="ml-1 text-[8px] font-bold text-white bg-primary px-0.5 rounded-[1px]">
+              <span className="text-[9px] font-bold text-white bg-primary px-1 rounded-[2px] h-3.5 flex items-center shrink-0">
                 THÂN
               </span>
             )}
           </h3>
         </div>
-        <span className="text-[9.5px] font-mono font-bold text-muted-foreground w-6 text-right opacity-30">
+        <span className="text-[11px] font-mono font-bold text-muted-foreground w-6 text-right opacity-30">
           {palace.decadalRange[0]}
         </span>
       </div>
@@ -157,7 +157,7 @@ export function PalaceCell({
       {/* Major Stars Section */}
       {showMajorStars && (
         <div className={cn(
-          "flex flex-col items-center mt-1 mb-2 relative z-10",
+          "flex flex-col items-center mt-1.5 mb-2.5 relative z-10",
           palace.majorStars.length > 1 ? "gap-0.5" : "gap-0"
         )}>
           {palace.majorStars.map((star, idx) => renderStar(star, idx, true))}
@@ -165,7 +165,7 @@ export function PalaceCell({
       )}
 
       {/* Minor Stars Section */}
-      <div className="px-1 flex-1 relative z-10 pb-1.5 border-t border-border/20 pt-2 flex w-full bg-secondary/5">
+      <div className="px-1 flex-1 relative z-10 pb-2 border-t border-border/20 pt-2 flex w-full bg-secondary/5">
         {/* Left container: Good Stars */}
         <div className="w-[50%] flex flex-col gap-[2px] pr-0.5">
           {goodStars.map((star, idx) => renderStar(star, idx, false, false))}
@@ -178,19 +178,19 @@ export function PalaceCell({
       </div>
 
       {/* Footer: Tràng Sinh, Decadal, Small Luck */}
-      <div className="mt-auto border-t border-border/50 bg-secondary/40 px-2 py-0.5 flex justify-between items-center relative z-10 text-[9px]">
+      <div className="mt-auto border-t border-border/50 bg-secondary/40 px-2 py-1 flex justify-between items-center relative z-10 text-[11px]">
         <div className="flex items-center gap-1.5 h-4">
-           <span className="font-black text-primary uppercase tracking-[0.2em] leading-none">
+           <span className="font-black text-primary uppercase tracking-[0.2em] leading-none text-[11px]">
              {palace.changsheng12}
            </span>
         </div>
         <div className="flex gap-2">
-          <span className="font-mono font-bold text-muted-foreground/40">
+          <span className="font-mono font-bold text-muted-foreground/40 text-[11px]">
             {palace.decadalRange[0]}
           </span>
-          <div className="flex gap-0.5">
+          <div className="flex gap-1">
             {palace.smallLuckAge.slice(0, 2).map(age => (
-              <span key={age} className="font-mono font-semibold text-muted-foreground/20">
+              <span key={age} className="font-mono font-semibold text-muted-foreground/20 text-[11px]">
                 {age}
               </span>
             ))}

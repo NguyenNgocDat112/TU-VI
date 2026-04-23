@@ -77,8 +77,8 @@ export function AstrologyForm({ onSubmit, initialData, compact }: Props) {
     <form 
       onSubmit={handleSubmit(onFormSubmit)} 
       className={cn(
-        "bg-white rounded-[6px] border border-border shadow-2xl mx-auto overflow-hidden",
-        compact ? "p-4 border-none shadow-none bg-transparent w-full" : "max-w-2xl"
+        "bg-white rounded-[6px] border border-border shadow-2xl mx-auto overflow-hidden w-full",
+        compact ? "p-4 border-none shadow-none bg-transparent" : "max-w-2xl"
       )}
     >
       {!compact && (
@@ -201,7 +201,7 @@ export function AstrologyForm({ onSubmit, initialData, compact }: Props) {
 
         {/* Section: Birth Time */}
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3 bg-muted/50 p-3 rounded-[6px] border border-border">
+          <div className="grid grid-cols-2 gap-2 md:gap-3 bg-muted/50 p-2.5 md:p-3 rounded-[6px] border border-border">
             <div className="space-y-1">
               <Label className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest ml-1">Giờ (0-23)</Label>
               <div className="relative">
@@ -211,9 +211,9 @@ export function AstrologyForm({ onSubmit, initialData, compact }: Props) {
                   min="0" 
                   max="23" 
                   required 
-                  className="pl-9 bg-white border-border h-9 rounded-[6px] font-mono text-sm"
+                  className="pl-8 md:pl-9 bg-white border-border h-9 rounded-[6px] font-mono text-xs md:text-sm"
                 />
-                <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/40" />
+                <Clock className="absolute left-2.5 md:left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/40" />
               </div>
             </div>
 
@@ -226,9 +226,9 @@ export function AstrologyForm({ onSubmit, initialData, compact }: Props) {
                   min="0" 
                   max="59" 
                   required 
-                  className="pl-9 bg-white border-border h-9 rounded-[6px] font-mono text-sm"
+                  className="pl-8 md:pl-9 bg-white border-border h-9 rounded-[6px] font-mono text-xs md:text-sm"
                 />
-                <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/40" />
+                <Clock className="absolute left-2.5 md:left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/40" />
               </div>
             </div>
           </div>
@@ -237,7 +237,7 @@ export function AstrologyForm({ onSubmit, initialData, compact }: Props) {
         <div className="pt-1">
           <Button 
             type="submit" 
-            className="w-full bg-primary hover:bg-primary/90 text-white font-heading font-extrabold shadow-lg shadow-primary/10 transition-all active:scale-[0.98] uppercase tracking-[0.1em] text-xs rounded-[6px] h-11"
+            className="w-full bg-primary hover:bg-primary/90 text-white font-heading font-extrabold shadow-lg shadow-primary/10 transition-all active:scale-[0.98] uppercase tracking-[0.05em] text-[11px] md:text-sm rounded-[6px] h-12"
           >
             Lập Lá Số & Giải Mã AI
           </Button>

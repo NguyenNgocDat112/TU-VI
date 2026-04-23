@@ -1,0 +1,59 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and quota information.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "lastLoginAt": { "type": "string", "format": "date-time" },
+        "interpretedChartIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["uid", "email"]
+    },
+    "History": {
+      "title": "Chart History",
+      "description": "Record of a calculated birth chart in user history.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "gender": { "type": "string" },
+        "solarDateTimestamp": { "type": "number" },
+        "hour": { "type": "number" },
+        "minute": { "type": "number" },
+        "isLunar": { "type": "boolean" },
+        "isLeap": { "type": "boolean" },
+        "lastViewedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "Interpretation": {
+      "title": "Palace Interpretation",
+      "description": "AI generated interpretation for a specific palace.",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "generatedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Top-level user information."
+    },
+    "/users/{userId}/history/{chartId}": {
+      "schema": "History",
+      "description": "User's birth chart history."
+    },
+    "/users/{userId}/history/{chartId}/interpretations/{palaceName}": {
+      "schema": "Interpretation",
+      "description": "AI interpretations for specific palaces of a chart."
+    }
+  }
+}

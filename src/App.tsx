@@ -20,9 +20,13 @@ import { STAR_MEANINGS, MINOR_STAR_MEANINGS, TU_HOA_MEANINGS } from './lib/starM
 import { getAICompletion } from './lib/aiService';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { auth, googleProvider, db } from './lib/firebase';
+import { signInWithPopup, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 // --- Types & Constants ---
-type View = 'landing' | 'result';
+type View = 'landing' | 'result' | 'profile' | 'admin';
+const ADMIN_EMAIL = 'truongduchungsonjr03@gmail.com';
 
 const PALACE_ICONS: Record<string, any> = {
   'Mệnh': User,
@@ -64,6 +68,138 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>('Mệnh');
   const [isSubscribed, setIsSubscribed] = useState(true);
 
+  // Authentication state
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [userData, setUserData] = useState<any>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+  const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const isAdmin = user?.email === ADMIN_EMAIL;
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const handleLogin = async () => {
+    if (isLoggingIn) return;
+    setIsLoggingIn(true);
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error: any) {
+      console.error("Login error:", error);
+      let message = "Có lỗi xảy ra khi đăng nhập.";
+      
+      if (error.code === 'auth/popup-blocked') {
+        message = "Trình duyệt đã chặn cửa sổ đăng nhập. Vui lòng bật popup cho trang này và thử lại.";
+      } else if (error.code === 'auth/cancelled-popup-request') {
+        // This one can be ignored as it's usually a double-click
+        return;
+      } else if (error.code === 'auth/popup-closed-by-user') {
+        message = "Bạn đã đóng cửa sổ đăng nhập.";
+      }
+      
+      window.dispatchEvent(new CustomEvent('app-notification', { 
+        detail: { message, type: 'error' } 
+      }));
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsUserDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    let userUnsubscribe: (() => void) | null = null;
+    
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      setIsAuthChecking(false);
+
+      if (currentUser) {
+        // Stop previous user listener if exists
+        if (userUnsubscribe) userUnsubscribe();
+        
+        // Import onSnapshot here or at top
+        const { onSnapshot } = await import('firebase/firestore');
+        const userRef = doc(db, 'users', currentUser.uid);
+        
+        // Listen to user data for quota
+        userUnsubscribe = onSnapshot(userRef, (snapshot) => {
+          if (snapshot.exists()) {
+            setUserData(snapshot.data());
+          }
+        });
+
+        // Set/update initial info
+        try {
+          await setDoc(userRef, {
+            uid: currentUser.uid,
+            email: currentUser.email,
+            displayName: currentUser.displayName,
+            photoURL: currentUser.photoURL,
+            lastLoginAt: serverTimestamp(),
+          }, { merge: true });
+
+          // Gán lá số hiện tại vào tài khoản nếu vừa đăng nhập
+          if (birthInfo) {
+            const docId = getChartId(birthInfo);
+            const historyRef = doc(db, 'users', currentUser.uid, 'history', docId);
+            await setDoc(historyRef, {
+              name: birthInfo.name,
+              gender: birthInfo.gender,
+              solarDateTimestamp: birthInfo.solarDate.getTime(),
+              hour: birthInfo.hour,
+              minute: birthInfo.minute,
+              isLunar: birthInfo.isLunar,
+              isLeap: birthInfo.isLeap,
+              lastViewedAt: serverTimestamp(),
+            }, { merge: true });
+          }
+        } catch (error) {
+          console.error("Lỗi khi lưu thông tin người dùng: ", error);
+        }
+      } else {
+        if (userUnsubscribe) userUnsubscribe();
+        setUserData(null);
+      }
+    });
+    
+    return () => {
+      unsubscribeAuth();
+      if (userUnsubscribe) userUnsubscribe();
+    };
+  }, [birthInfo]); // Run when birthInfo is available after login
+
+  useEffect(() => {
+    const fetchStoredInterpretations = async () => {
+      if (user && birthInfo && view === 'result') {
+        try {
+          const { collection, getDocs } = await import('firebase/firestore');
+          const chartId = getChartId(birthInfo);
+          const interpRef = collection(db, 'users', user.uid, 'history', chartId, 'interpretations');
+          const snapshot = await getDocs(interpRef);
+          
+          const stored: Record<string, string> = {};
+          snapshot.forEach(doc => {
+            stored[doc.id] = doc.data().text;
+          });
+          
+          if (Object.keys(stored).length > 0) {
+            setPalaceInterpretations(prev => ({ ...prev, ...stored }));
+          }
+        } catch (e) {
+          console.error("Lỗi tải luận giải có sẵn:", e);
+        }
+      }
+    };
+    fetchStoredInterpretations();
+  }, [user, birthInfo, view]);
+
   // AI related states
   const [palaceInterpretations, setPalaceInterpretations] = useState<Record<string, string>>({});
   const [isGeneratingTabAI, setIsGeneratingTabAI] = useState(false);
@@ -84,18 +220,69 @@ export default function App() {
     return () => window.removeEventListener('app-notification', handleNotification as EventListener);
   }, []);
 
+  // History state
+  const [historyList, setHistoryList] = useState<any[]>([]);
+
+  const fetchHistory = async (uid: string) => {
+    try {
+      // Need import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore'; 
+      // but we will just add them to the import
+      const { collection, query, orderBy, limit, getDocs } = await import('firebase/firestore');
+      const q = query(collection(db, 'users', uid, 'history'), orderBy('lastViewedAt', 'desc'), limit(15));
+      const querySnapshot = await getDocs(q);
+      const historyData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setHistoryList(historyData);
+    } catch(e) { 
+      console.error('Error fetching history', e); 
+    }
+  }
+
+  useEffect(() => {
+    if (user && view === 'landing') {
+      fetchHistory(user.uid);
+    }
+  }, [user, view]);
+
   const PRIORITY_ORDER = ['Mệnh', 'Tài Bạch', 'Quan Lộc', 'Phu Thê', 'Thiên Di', 'Phúc Đức', 'Phụ Mẫu', 'Điền Trạch', 'Nô Bộc', 'Tật Ách', 'Tử Tức', 'Huynh Đệ'];
 
-  const handleFormSubmit = (data: BirthInfo) => {
+  const getChartId = (data: BirthInfo) => {
+    return btoa(encodeURIComponent(`${data.name}-${data.gender}-${data.solarDate.getFullYear()}-${data.solarDate.getMonth()}-${data.solarDate.getDate()}-${data.hour}-${data.minute}-${data.isLunar}`)).replace(/[\/\+=]/g, '_');
+  };
+
+  const handleFormSubmit = async (data: BirthInfo, isFromHistory = false) => {
     try {
       const chart = calculateChart(data, yearlyYear);
-      console.log("Chart calculated successfully:", chart);
       setChartData(chart);
       setBirthInfo(data);
       setSelectedPalaceIndex(chart.menhIdx);
       setActiveTab('Mệnh');
-      setPalaceInterpretations({});
+      
+      // Chỉ xoá luận giải nếu không phải mở từ lịch sử
+      if (!isFromHistory) {
+        setPalaceInterpretations({});
+      }
+      
       setView('result');
+
+      // Thêm chức năng lưu lịch sử nếu user đăng nhập
+      if (user) {
+        try {
+          const docId = getChartId(data);
+          const historyRef = doc(db, 'users', user.uid, 'history', docId);
+          await setDoc(historyRef, {
+            name: data.name,
+            gender: data.gender,
+            solarDateTimestamp: data.solarDate.getTime(),
+            hour: data.hour,
+            minute: data.minute,
+            isLunar: data.isLunar,
+            isLeap: data.isLeap,
+            lastViewedAt: serverTimestamp(),
+          }, { merge: true });
+        } catch (dbError) {
+          console.error("Lỗi lưu lịch sử:", dbError);
+        }
+      }
     } catch (error: any) {
       console.error("Error calculating chart:", error);
       window.dispatchEvent(new CustomEvent('app-notification', { 
@@ -112,7 +299,28 @@ export default function App() {
   };
 
   const generateTabInterpretation = async (palaceName: string) => {
+    if (!user) {
+      window.dispatchEvent(new CustomEvent('app-notification', { 
+        detail: { message: 'Đăng nhập để xem luận giải miễn phí.', type: 'info' } 
+      }));
+      return;
+    }
+    
     if (!chartData || isGeneratingTabAI) return;
+
+    // Kiểm tra hạn mức luận giải (Quota)
+    const chartId = getChartId(birthInfo!);
+    const interpretedChartIds = userData?.interpretedChartIds || [];
+    const isAlreadyInterpreted = interpretedChartIds.includes(chartId);
+    const quotaLimit = userData?.customQuotaLimit || 2;
+
+    if (!isAdmin && !isAlreadyInterpreted && interpretedChartIds.length >= quotaLimit) {
+      window.dispatchEvent(new CustomEvent('app-notification', { 
+        detail: { message: `Bạn đã hết lượt luận giải miễn phí (tối đa cho ${quotaLimit} lá số). Vui lòng nâng cấp tài khoản để tiếp tục.`, type: 'error' } 
+      }));
+      return;
+    }
+
     setIsGeneratingTabAI(true);
     setInterpretingPalace(palaceName);
     try {
@@ -160,23 +368,62 @@ export default function App() {
       const year = new Date().getFullYear();
       const isMenh = palace.name === 'Mệnh';
 
+      // Tính chính xác Phi Hóa và Lưu Tứ Hóa
+      const STEMS = ['Giáp', 'Ất', 'Bính', 'Đinh', 'Mậu', 'Kỷ', 'Canh', 'Tân', 'Nhâm', 'Quý'];
+      const mutMap: Record<string, [string, string, string, string]> = {
+        'Giáp': ['Liêm Trinh', 'Phá Quân', 'Vũ Khúc', 'Thái Dương'],
+        'Ất': ['Thiên Cơ', 'Thiên Lương', 'Tử Vi', 'Thái Âm'],
+        'Bính': ['Thiên Đồng', 'Thiên Cơ', 'Văn Xương', 'Liêm Trinh'],
+        'Đinh': ['Thái Âm', 'Thiên Đồng', 'Thiên Cơ', 'Cự Môn'],
+        'Mậu': ['Tham Lang', 'Thái Âm', 'Hữu Bật', 'Thiên Cơ'],
+        'Kỷ': ['Vũ Khúc', 'Tham Lang', 'Thiên Lương', 'Văn Khúc'],
+        'Canh': ['Thái Dương', 'Vũ Khúc', 'Thái Âm', 'Thiên Đồng'],
+        'Tân': ['Cự Môn', 'Thái Dương', 'Văn Khúc', 'Văn Xương'],
+        'Nhâm': ['Thiên Lương', 'Tử Vi', 'Tả Phù', 'Vũ Khúc'],
+        'Quý': ['Phá Quân', 'Cự Môn', 'Thái Âm', 'Tham Lang']
+      };
+
+      const findPalaceWithStar = (starName: string) => {
+        const found = chartData.palaces.find((p: any) => 
+          p.majorStars.some((s: any) => s.name === starName) || 
+          p.minorStars.some((s: any) => s.name === starName) ||
+          p.adjectiveStars.some((s: any) => s.name === starName) ||
+          p.name === starName
+        );
+        return found ? found.name : 'Chưa rõ';
+      };
+
+      const pStem = palace.stem;
+      const [pLoc, pQuyen, pKhoa, pKy] = mutMap[pStem] || ['','','',''];
+      const phiHoaStr = mutMap[pStem] ? 
+        `  - Hóa Lộc: nhập cung ${findPalaceWithStar(pLoc)} (sao ${pLoc})\n` +
+        `  - Hóa Quyền: nhập cung ${findPalaceWithStar(pQuyen)} (sao ${pQuyen})\n` +
+        `  - Hóa Khoa: nhập cung ${findPalaceWithStar(pKhoa)} (sao ${pKhoa})\n` +
+        `  - Hóa Kỵ: nhập cung ${findPalaceWithStar(pKy)} (sao ${pKy})` : 'Không xác định';
+
+      const baseYear = 1984; // Giáp Tý
+      const diff = year - baseYear;
+      const yearStemIdx = (diff % 10 + 10) % 10;
+      const yearStem = STEMS[yearStemIdx];
+      const [yLoc, yQuyen, yKhoa, yKy] = mutMap[yearStem] || ['','','',''];
+      const luuTuHoaStr = mutMap[yearStem] ?
+        `  - Lưu Hóa Lộc: sao ${yLoc} (cung ${findPalaceWithStar(yLoc)})\n` +
+        `  - Lưu Hóa Quyền: sao ${yQuyen} (cung ${findPalaceWithStar(yQuyen)})\n` +
+        `  - Lưu Hóa Khoa: sao ${yKhoa} (cung ${findPalaceWithStar(yKhoa)})\n` +
+        `  - Lưu Hóa Kỵ: sao ${yKy} (cung ${findPalaceWithStar(yKy)})` : 'Không xác định';
+
       const prompt = `Bạn là chuyên gia Tử Vi Đẩu Số cao cấp. Nhiệm vụ của bạn là luận giải CHUYÊN SÂU DUY NHẤT một cung, dựa hoàn toàn vào dữ liệu được cung cấp.
 
 ---
 
 ## NGUYÊN TẮC CỐT LÕI
 
-* Chỉ tập trung vào cung đang luận, không lan sang toàn bộ lá số
-* Ưu tiên phân tích theo thứ tự:
-  1. Chính tinh
-  2. Bộ cách
-  3. Phi hóa
-  4. Tam hợp / xung chiếu
-  5. Phụ tinh
-* Không nói chung chung, không lặp ý
-* Cấm tuyệt đối: Không phân tích hoặc nhắc đến tương quan Mệnh - Cục (Cục sinh Mệnh, Mệnh khắc Cục...) nếu đây KHÔNG phải là cung Mệnh.
-* Không tự bịa dữ liệu (hallucinate)
-* Luôn gắn với hành vi thực tế
+* Chỉ tập trung vào cung đang luận, không lan sang toàn bộ lá số.
+* Bạn bắt buộc phải bám sát thứ tự: Chính tinh → Bộ sao/Cách cục → Phụ tinh → Tam hợp/Xung chiếu → Phi Hóa. Đánh giá sự pha trộn giữa Chính tinh và Phụ tinh thật chi tiết, đặc biệt hội tụ từ Tam hợp và Xung chiếu.
+* **Định dạng sao**: Bắt buộc in đậm các sao kèm theo ngũ hành trong ngoặc vuông: \`**Tên Sao [Ngũ Hành]**\`. CHÚ Ý: CẤM TUYỆT ĐỐI KHÔNG lặp lại tên sao ngay sau khi đã định dạng. (Ví dụ ĐÚNG: \`**Thất Sát [Kim]** là một sao mạnh mẽ...\`. Ví dụ SAI: \`**Thất Sát [Kim]** Thất Sát là sao...\`).
+* Viết câu súc tích, tránh lặp lại các từ như "sự", "như", "là" nhiều lần trong cùng một đoạn. 
+* Cấm tuyệt đối: Không phân tích tương quan Mệnh - Cục nếu đây KHÔNG phải cung Mệnh.
+* Không tự bịa dữ liệu. Luôn gắn với hành vi thực tế. Văn phong hiện đại, trực diện.
 
 ---
 
@@ -191,8 +438,9 @@ export default function App() {
 
 ---
 
-## LIÊN KẾT NGOẠI VI
+## LIÊN KẾT NGOẠI VI (Tam hợp & Xung chiếu)
 
+* Đừng bỏ qua Phụ tinh từ các cung này, vì chúng kích phát hoặc phá ngoạn Chính tinh:
 * Xung chiếu: ${xungChieu.all}
 * Tam hợp: ${tamHop1.all}, ${tamHop2.all}
 * Nhị hợp: ${nhiHop.all}
@@ -201,14 +449,18 @@ export default function App() {
 
 ## TỨ HÓA & PHI HÓA
 
-* Bố cục các sao toàn lá số (để tự suy luận phi hóa và tứ hóa): ${allPalacesStr}
-* Ghi chú: Hãy tự an Tứ Hóa (Lộc, Quyền, Khoa, Kỵ) theo Can của cung đang xét và Can của năm ${year}.
+* Bố cục các sao toàn lá số: ${allPalacesStr}
+* Phi Hóa Cung (Can ${pStem}): 
+${phiHoaStr}
+* GHI CHÚ: Luận giải Phi Hóa bằng ngôn ngữ ĐỜI THƯỜNG, vô cùng DỄ HIỂU (ví dụ: Hóa Kỵ sang cung Phu Thê nghĩa là mình luôn mắc nợ tình cảm hay áp đặt vợ/chồng; Hóa Lộc sang cung Tài Bạch nghĩa là khả năng tự thân kiếm tiền dồi dào). Tránh dùng quá nhiều từ Hán Việt khô khan hay lặp lại công thức rập khuôn.
 
 ---
 
-## LƯU NIÊN ${year}
+## LƯU NIÊN ${year} (Can ${yearStem})
 
-* Năm nay là ${year}, hãy tự an Lưu Tứ Hóa theo thiên can của năm ${year} để luận đoán những biến động.
+* Dựa vào thiên can năm ${year} là ${yearStem}, hệ thống đã tính Lưu Tứ Hóa như sau:
+${luuTuHoaStr}
+* Hãy sử dụng thông tin Lưu Tứ Hóa trên để luận đoán biến động, thời cơ và rủi ro của cung đang luận trong năm ${year}.
 
 ---
 
@@ -314,6 +566,38 @@ export default function App() {
 
       const text = await getAICompletion(prompt);
       setPalaceInterpretations(prev => ({ ...prev, [palaceName]: text }));
+
+      // Ghi nhận hạn mức sử dụng (Quota) sau khi luận giải thành công
+      if (!isAlreadyInterpreted) {
+        try {
+          const { arrayUnion, updateDoc, setDoc: firestoreSetDoc } = await import('firebase/firestore');
+          const userRef = doc(db, 'users', user.uid);
+          await updateDoc(userRef, {
+            interpretedChartIds: arrayUnion(chartId)
+          });
+          
+          // Lưu nội dung luận giải vào Firestore để xem lại
+          const interpRef = doc(db, 'users', user.uid, 'history', chartId, 'interpretations', palaceName);
+          await firestoreSetDoc(interpRef, {
+            text,
+            generatedAt: serverTimestamp()
+          });
+        } catch (dbErr) {
+          console.error("Lỗi cập nhật hạn mức/luận giải:", dbErr);
+        }
+      } else {
+        // Nếu đã luận giải rồi (đã có trong Quota) nhưng chưa có trong subcollection (trường hợp cũ), vẫn nên lưu lại
+        try {
+          const { setDoc: firestoreSetDoc } = await import('firebase/firestore');
+          const interpRef = doc(db, 'users', user.uid, 'history', chartId, 'interpretations', palaceName);
+          await firestoreSetDoc(interpRef, {
+            text,
+            generatedAt: serverTimestamp()
+          });
+        } catch (dbErr) {
+          console.error("Lỗi lưu lại luận giải:", dbErr);
+        }
+      }
     } catch (err: any) {
       console.error(err);
       const msg = err.message || 'Lỗi không xác định';
@@ -327,6 +611,13 @@ export default function App() {
   };
 
   const generateAllInterpretations = async () => {
+    if (!user) {
+      window.dispatchEvent(new CustomEvent('app-notification', { 
+        detail: { message: 'Đăng nhập để xem luận giải miễn phí.', type: 'info' } 
+      }));
+      return;
+    }
+    
     if (!chartData || isGeneratingTabAI) return;
     const palaces = PRIORITY_ORDER.filter(p => chartData.palaces.some((cp: any) => cp.name === p));
     for (const pName of palaces) {
@@ -338,10 +629,10 @@ export default function App() {
 
   return (
     <TooltipProvider delay={300}>
-      <div className="min-h-screen bg-background text-foreground selection:bg-primary/20 overflow-x-hidden font-sans">
+      <div className="min-h-screen w-full max-w-[100vw] bg-background text-foreground selection:bg-primary/20 overflow-x-hidden font-sans">
         
         {/* Global Notifications */}
-        <div className="fixed bottom-6 right-6 z-[100] flex flex-col gap-3 max-w-sm w-full">
+        <div className="fixed top-4 md:top-20 left-4 right-4 md:left-auto md:right-6 z-[100] flex flex-col gap-3 md:max-w-sm w-auto md:w-full">
            <AnimatePresence>
               {notifications.map(notification => (
                 <motion.div
@@ -370,13 +661,82 @@ export default function App() {
             <span className="font-heading font-black text-2xl tracking-tighter text-primary">TỬ VI</span>
           </div>
           <div className="flex items-center gap-3">
-             {/* Login button removed as requested */}
+             {!isAuthChecking && (
+               user ? (
+                 <div className="relative" ref={dropdownRef} onMouseEnter={() => setIsUserDropdownOpen(true)} onMouseLeave={() => setIsUserDropdownOpen(false)}>
+                   <div 
+                     className="flex items-center gap-2 cursor-pointer hover:bg-secondary/50 p-1.5 pr-3 rounded-full transition-colors border border-transparent hover:border-border"
+                     onClick={() => setIsUserDropdownOpen(!isUserDropdownOpen)}
+                   >
+                     {user.photoURL && <img src={user.photoURL} alt="Avatar" className="w-8 h-8 rounded-full border border-primary/20" />}
+                     <span className="text-sm font-bold hidden md:block">{user.displayName}</span>
+                   </div>
+                   
+                   <AnimatePresence>
+                     {isUserDropdownOpen && (
+                       <motion.div
+                         initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                         animate={{ opacity: 1, y: 0, scale: 1 }}
+                         exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                         transition={{ duration: 0.15 }}
+                         className="absolute right-0 top-full mt-2 w-56 bg-popover rounded-xl border border-border shadow-lg z-[110] overflow-hidden"
+                       >
+                         <div className="flex flex-col space-y-1 p-3 border-b border-border/50 bg-secondary/20">
+                           <p className="text-sm font-medium leading-none text-foreground">{user.displayName}</p>
+                           <p className="text-xs leading-none text-muted-foreground pt-1 truncate">{user.email}</p>
+                         </div>
+                         <div className="p-1">
+                           <button 
+                             className="w-full text-left px-3 py-2 text-sm font-medium rounded-md hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer outline-none"
+                             onClick={() => {
+                               setView('profile');
+                               setIsUserDropdownOpen(false);
+                             }}
+                           >
+                             Xem thông tin
+                           </button>
+                           <button 
+                             className="w-full text-left px-3 py-2 text-sm font-medium rounded-md text-red-600 hover:bg-red-50 transition-colors cursor-pointer outline-none"
+                             onClick={() => {
+                               auth.signOut();
+                               setIsUserDropdownOpen(false);
+                             }}
+                           >
+                             Đăng xuất
+                           </button>
+                         </div>
+                       </motion.div>
+                     )}
+                   </AnimatePresence>
+                 </div>
+               ) : (
+                 <Button onClick={handleLogin} disabled={isLoggingIn} size="sm" className="h-8 font-bold gap-2 text-[11px] bg-primary rounded-lg text-white">
+                   Đăng nhập Google
+                 </Button>
+               )
+             )}
           </div>
         </nav>
 
-        <main className="pt-20 md:pt-24 pb-6 md:pb-12">
+        <main className="pt-16 md:pt-16 pb-6 md:pb-12">
           <AnimatePresence mode="wait">
-            {view === 'landing' && <LandingView key="landing" onStart={handleFormSubmit} />}
+            {view === 'landing' && <LandingView key="landing" onStart={handleFormSubmit} historyList={historyList} user={user} />}
+            {view === 'profile' && user && (
+              <ProfileView 
+                key="profile" 
+                user={user} 
+                userData={userData} 
+                isAdmin={isAdmin}
+                onAdminClick={() => setView('admin')}
+                onBack={() => setView('landing')} 
+              />
+            )}
+            {view === 'admin' && user && isAdmin && (
+              <AdminDashboard 
+                key="admin" 
+                onBack={() => setView('landing')} 
+              />
+            )}
             {view === 'result' && chartData && (
               <>
                 <ResultView 
@@ -465,34 +825,21 @@ function Marquee({ children, reverse = false, pauseOnHover = true, speed = 40 }:
 
   return (
     <div 
-      className="flex w-full overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_10%,black_90%,transparent)]"
+      className="flex w-full overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_10%,black_90%,transparent)] cursor-pointer active:cursor-grabbing py-4"
       onMouseEnter={() => pauseOnHover && setIsPaused(true)}
       onMouseLeave={() => pauseOnHover && setIsPaused(false)}
+      onTouchStart={() => pauseOnHover && setIsPaused(true)}
+      onTouchEnd={() => pauseOnHover && setIsPaused(false)}
+      onPointerDown={() => pauseOnHover && setIsPaused(true)}
+      onPointerUp={() => pauseOnHover && setIsPaused(false)}
+      style={{ '--speed': `${speed}s` } as React.CSSProperties}
     >
-      <motion.div
-        animate={{ x: reverse ? ["-50%", "0%"] : ["0%", "-50%"] }}
-        transition={{ 
-          duration: speed, 
-          repeat: Infinity, 
-          ease: "linear",
-        }}
-        style={{
-          display: 'flex',
-          animationPlayState: isPaused ? 'paused' : 'running',
-          // Note: Framer motion sometimes overrides CSS animation-play-state
-          // To be safe, we can use the 'animate' prop with a conditional repeat
-        }}
-        // Using a more reliable way with Framer Motion for pausing
-        className={cn("flex shrink-0 gap-4 py-4 min-w-full")}
-      >
-        {/* We'll use a standard CSS marquee for better pause support or stick with JS if we handle it correctly */}
-        <div className={cn("flex shrink-0 gap-8 min-w-full", reverse ? "animate-marquee-reverse" : "animate-marquee", isPaused && "pause")}>
-          {children}
-          {children}
-          {children}
-          {children}
-        </div>
-      </motion.div>
+      <div className={cn("flex shrink-0 gap-8 min-w-full w-max", reverse ? "animate-marquee-reverse" : "animate-marquee", isPaused && "pause")}>
+        {children}
+        {children}
+        {children}
+        {children}
+      </div>
       <style>{`
         @keyframes marquee {
           0% { transform: translateX(0%); }
@@ -516,26 +863,24 @@ function Marquee({ children, reverse = false, pauseOnHover = true, speed = 40 }:
   );
 }
 
-function FAQItem({ question, answer }: { question: string, answer: string }) {
-  const [isOpen, setIsOpen] = useState(false);
-
+function FAQItem({ question, answer, isOpen, onToggle }: { question: string, answer: string, isOpen: boolean, onToggle: () => void }) {
   return (
     <div className={cn(
-      "border transition-all duration-500 rounded-3xl overflow-hidden bg-white shadow-sm",
+      "border transition-all duration-500 rounded-2xl overflow-hidden bg-white shadow-sm",
       isOpen ? "border-primary/20 shadow-lg shadow-primary/5" : "border-slate-100 hover:border-slate-200"
     )}>
       <button 
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center gap-4 p-4 md:p-5 text-left group"
+        onClick={onToggle}
+        className="w-full flex items-center gap-3 p-3 md:p-4 text-left group"
       >
-        <span className="flex-1 font-bold text-slate-800 text-[14px] md:text-[15px] pr-4 tracking-tight leading-snug">
+        <span className="flex-1 font-bold text-slate-800 text-[13px] md:text-[14px] pr-2 tracking-tight leading-snug">
           {question}
         </span>
         <div className={cn(
-          "shrink-0 w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center transition-all duration-500 text-slate-400",
+          "shrink-0 w-7 h-7 rounded-full bg-slate-50 flex items-center justify-center transition-all duration-500 text-slate-400",
           isOpen ? "bg-primary/10 text-primary rotate-180" : ""
         )}>
-          <ChevronDown className="w-4 h-4" />
+          <ChevronDown className="w-3.5 h-3.5" />
         </div>
       </button>
       <AnimatePresence>
@@ -547,8 +892,8 @@ function FAQItem({ question, answer }: { question: string, answer: string }) {
             transition={{ duration: 0.3, ease: "easeInOut" }}
             className="overflow-hidden"
           >
-            <div className="px-4 md:px-5 pb-5 pt-0 text-slate-500 text-[13px] md:text-sm font-medium leading-relaxed">
-              <div className="pt-4 border-t border-slate-50">
+            <div className="px-3 md:px-4 pb-4 pt-0 text-slate-500 text-[12px] md:text-[13px] font-medium leading-relaxed">
+              <div className="pt-3 border-t border-slate-50">
                 {answer}
               </div>
             </div>
@@ -559,7 +904,8 @@ function FAQItem({ question, answer }: { question: string, answer: string }) {
   );
 }
 
-function LandingView({ onStart }: { onStart: (data: any) => void }) {
+function LandingView({ onStart, historyList = [], user }: { onStart: (data: any, isFromHistory?: boolean) => void, historyList?: any[], user: FirebaseUser | null }) {
+  const [openFAQIndex, setOpenFAQIndex] = useState<number | null>(null);
   const handleTemplateClick = (type: 'doanh_nhan' | 'hong_nhan') => {
     if (type === 'doanh_nhan') {
       const solarDate = new Date(2003, 0, 10); // Tháng là 0-indexed (0 = tháng 1)
@@ -612,133 +958,133 @@ function LandingView({ onStart }: { onStart: (data: any) => void }) {
       role: "Kỹ sư",
       age: 31,
       content: "Ban đầu mình hơi nghi ngờ về AI xem Tử Vi, nhưng kết quả làm mình bất ngờ. Đặc biệt là phần luận giải về tính cách và tiềm năng nghề nghiệp.",
-      avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Felix"
+      avatar: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=Lam"
     },
     {
       name: "BS. Vũ Ngọc Anh",
       role: "Bác sĩ chuyên khoa 2",
       age: 36,
       content: "Là người làm y khoa nhiều năm, tôi vốn rất thận trọng với các ứng dụng xem Tử Vi. Nhưng SOMENH.AI.VN đã khiến tôi thay đổi suy nghĩ. Phần luận giải về sức khỏe và vận hạn y khoa trong lá số cực kỳ tinh tế.",
-      avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Aneka"
+      avatar: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=DocAnh"
     },
     {
       name: "Triệu Vân Như Nguyệt",
       role: "Nhân viên văn phòng",
       age: 28,
       content: "Mình đã thử nhiều trang tử vi nhưng SOMENH.AI.VN thực sự khác biệt. Phần luận giải về cung Phu Thê cực kỳ chi tiết và đúng với hoàn cảnh hiện tại của mình. Rất đáng thử!",
-      avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Lily"
+      avatar: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=Nguyet"
     },
     {
       name: "Đào Phương Bắc",
       role: "Kinh doanh tự do",
       age: 35,
       content: "Công nghệ AI phân tích nhanh nhưng vẫn giữ được cái 'chất' của tử vi truyền thống. Phần dự đoán vận hạn năm nay giúp tôi có kế hoạch đầu tư cẩn trọng hơn.",
-      avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Jack"
+      avatar: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=Bac"
     },
     {
       name: "Đồng Hải Đăng",
       role: "Chuyên gia AI",
       age: 39,
       content: "Tôi đánh giá rất cao thuật toán xử lý lá số tử vi của SOMENH.AI.VN. Độ chính xác trong việc cá nhân hóa luận giải là một bước tiến đáng kể.",
-      avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Dave"
+      avatar: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=Dang"
     },
     {
       name: "Luật sư Kim Dung",
       role: "Luật sư",
       age: 45,
       content: "Trong công việc đòi hỏi sự tỉnh táo, tôi dùng SOMENH.AI.VN để tham khảo thêm về các mối quan hệ đối tác. Rất đáng giá cho lãnh đạo.",
-      avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Sasha"
+      avatar: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=Dung"
     },
     {
       name: "Trần Thế Vinh",
       role: "Sinh viên năm cuối",
       age: 22,
       content: "AI tư vấn chọn nghề nghiệp rất sát với đam mê của mình. Nhờ lá số mà mình có thêm tự tin để theo đuổi con đường lập trình chuyên nghiệp.",
-      avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Vinh"
+      avatar: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=Vinh"
     },
     {
       name: "Phạm Mỹ Linh",
       role: "Chủ shop thời trang",
       age: 29,
       content: "Hạn tháng và hạn năm của SOMENH.AI rất chính xác. Những lúc khó khăn, lời khuyên từ AI giúp mình bình tâm và đưa ra những quyết định đúng đắn.",
-      avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Linh"
+      avatar: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=Linh"
     },
     {
       name: "Lê Hữu Đạt",
       role: "Môi giới BĐS",
       age: 33,
       content: "Cung Điền Trạch giải đáp rất hay về lộc đất đai. AI cũng chỉ cho mình những năm nào nên cẩn trọng, năm nào nên tấn công mạnh mẽ.",
-      avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Dat"
+      avatar: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=Dat"
     },
     {
       name: "Hoàng Thanh Thảo",
       role: "Nội trợ",
       age: 42,
       content: "Tôi xem cho cả gia đình. AI luận giải về con cái và gia đạo rất ấm áp, giúp tôi hiểu và chia sẻ với các thành viên trong gia đình tốt hơn.",
-      avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Thao"
+      avatar: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=Thao"
     },
     {
       name: "Bùi Quốc Anh",
       role: "Content Creator",
       age: 26,
       content: "Giao diện đẹp, luận giải lại bằng ngôn ngữ rất trẻ trung và dễ tiếp cận. Mình đã giới thiệu cho rất nhiều bạn bè cùng trải nghiệm.",
-      avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Anh"
+      avatar: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=Anh"
     },
     {
       name: "Ngô Thị Thu",
       role: "Giáo viên",
       age: 38,
       content: "Sự kết hợp giữa AI và Tử Vi thật sự kỳ diệu. Không cần phải chờ đợi thầy luận giải, chỉ cần vài giây là có ngay kết quả chi tiết.",
-      avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Thu"
+      avatar: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=Thu"
     },
     {
       name: "Đặng Văn Hùng",
       role: "Kiến trúc sư",
       age: 44,
       content: "Lá số chi tiết đến không ngờ. Đặc biệt là phần tư vấn về Điền Trạch và phương hướng xây dựng sự nghiệp.",
-      avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Hung"
+      avatar: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=Hung"
     },
     {
       name: "Sơn Tùng",
       role: "Nghệ sĩ trẻ",
       age: 27,
       content: "Mình rất thích cách AI phân tích cung Phúc Đức. Nó truyền cho mình nhiều cảm hứng sáng tạo hơn.",
-      avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Tung"
+      avatar: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=Tung"
     },
     {
       name: "Tô Mỹ Hạnh",
       role: "HR Manager",
       age: 34,
       content: "Sử dụng SOMENH.AI giúp mình hiểu thêm về tiềm năng của nhân sự qua góc nhìn tử vi ứng dụng. Rất thú vị!",
-      avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Hanh"
+      avatar: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=Hanh"
     },
     {
       name: "Lý Gia Kiệt",
       role: "Nhà đầu tư F0",
       age: 25,
       content: "Dự đoán vận hạn năm giúp mình tỉnh táo hơn trong các quyết định tài chính mạo hiểm.",
-      avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Kiet"
+      avatar: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=Kiet"
     },
     {
       name: "Phượng Chanel",
       role: "Kinh doanh mỹ phẩm",
       age: 32,
       content: "AI luận giải cung Nô Bộc rất sát, giúp mình biết chọn lọc cộng sự trung thành để phát triển kinh doanh.",
-      avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Phuong"
+      avatar: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=Phuong"
     },
     {
       name: "Võ Hoàng Yến",
       role: "Model",
       age: 30,
       content: "Cung Thiên Di cho mình những lời khuyên tuyệt vời về việc xuất ngoại và phát triển sự nghiệp ở xa.",
-      avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Yen"
+      avatar: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=Yen"
     },
     {
       name: "Trọng Hiếu",
       role: "Chuyên gia thể hình",
       age: 28,
       content: "Phần luận về Tật Ách nhắc nhở mình về sức khỏe rất đúng lúc. Cảm ơn AI rất nhiều!",
-      avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Hieu"
+      avatar: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=Hieu"
     }
   ];
 
@@ -747,15 +1093,15 @@ function LandingView({ onStart }: { onStart: (data: any) => void }) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="container mx-auto px-6 py-8 md:py-12"
+      className="container mx-auto px-4 md:px-6 py-8 md:py-12"
     >
       <div className="relative">
         <div className="absolute top-0 left-1/4 w-72 h-72 bg-primary/20 rounded-full blur-[120px] -z-10 animate-pulse" />
         <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-emerald-500/10 rounded-full blur-[128px] -z-10" />
 
-        <div className="grid lg:grid-cols-2 gap-8 items-center">
+        <div className="grid lg:grid-cols-2 gap-8 items-start w-full">
           {/* Left side: Hero */}
-          <section className="space-y-6">
+          <section className="space-y-6 min-w-0 w-full">
             <motion.div 
               initial={{ x: -20, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
@@ -767,12 +1113,12 @@ function LandingView({ onStart }: { onStart: (data: any) => void }) {
             </motion.div>
             
             <div className="space-y-4">
-              <h1 className="text-4xl md:text-5xl font-heading font-extrabold text-foreground tracking-tight uppercase leading-[1.1]">
+              <h1 className="text-3xl md:text-5xl font-heading font-extrabold text-foreground tracking-tight uppercase leading-[1.1]">
                 Từ Tinh Tú <br />
                 <span className="text-primary italic">Ngàn Xưa</span> <br />
                 <span className="text-foreground">Đến AI Hôm Nay!</span>
               </h1>
-              <p className="text-sm md:text-base text-slate-600 max-w-md leading-relaxed font-medium">
+              <p className="text-xs md:text-base text-slate-600 max-w-md leading-relaxed font-medium">
                 Kết hợp tinh hoa <span className="text-primary font-bold underline decoration-primary/30 underline-offset-4">Tử Vi Đẩu Số</span> và sức mạnh <span className="text-primary font-bold underline decoration-primary/30 underline-offset-4">Trí Tuệ Nhân Tạo</span> để mang đến lời giải đoán chi tiết, khách quan và sâu sắc.
               </p>
             </div>
@@ -785,18 +1131,18 @@ function LandingView({ onStart }: { onStart: (data: any) => void }) {
                     <div className="w-1.5 h-1.5 rounded-full bg-primary/20" />
                   </div>
                </div>
-               <div className="flex flex-wrap gap-2 md:gap-3">
-                  <Button onClick={() => handleTemplateClick('doanh_nhan')} variant="secondary" className="rounded-2xl gap-2 md:gap-2.5 bg-white border border-slate-100 hover:border-primary/30 hover:bg-primary/5 text-slate-700 transition-all shadow-sm">
+               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 md:gap-3">
+                  <Button onClick={() => handleTemplateClick('doanh_nhan')} variant="secondary" className="rounded-2xl gap-2 md:gap-2.5 bg-white border border-slate-100 hover:border-primary/30 hover:bg-primary/5 text-slate-700 transition-all shadow-sm justify-start px-4">
                     <div className="w-6 h-6 rounded-lg bg-primary/10 flex items-center justify-center text-primary"><User className="w-3.5 h-3.5" /></div> 
                     <span className="text-sm font-medium">Lá số Doanh nhân</span>
                   </Button>
-                  <Button onClick={() => handleTemplateClick('hong_nhan')} variant="secondary" className="rounded-2xl gap-2 md:gap-2.5 bg-white border border-slate-100 hover:border-pink-300 hover:bg-pink-50 text-slate-700 transition-all shadow-sm">
+                  <Button onClick={() => handleTemplateClick('hong_nhan')} variant="secondary" className="rounded-2xl gap-2 md:gap-2.5 bg-white border border-slate-100 hover:border-pink-300 hover:bg-pink-50 text-slate-700 transition-all shadow-sm justify-start px-4">
                     <div className="w-6 h-6 rounded-lg bg-pink-100 flex items-center justify-center text-pink-600"><Heart className="w-3.5 h-3.5" /></div> 
                     <span className="text-sm font-medium">Lá số Nữ Hồng nhan</span>
                   </Button>
                </div>
-               <div className="pt-4 md:pt-6 border-t border-slate-200/50 flex items-center justify-between md:pr-6">
-                  <div className="flex gap-6 text-[11px] font-bold text-slate-400">
+               <div className="pt-4 md:pt-6 border-t border-slate-200/50 flex flex-wrap gap-4 items-center justify-between md:pr-6">
+                  <div className="flex flex-wrap gap-3 md:gap-6 text-[10px] md:text-[11px] font-bold text-slate-400">
                     <span className="hover:text-primary transition-all cursor-pointer flex items-center gap-2">FACEBOOK</span>
                     <span className="hover:text-primary transition-all cursor-pointer flex items-center gap-2">TIKTOK</span>
                     <span className="hover:text-primary transition-all cursor-pointer flex items-center gap-2">ZALO</span>
@@ -813,15 +1159,52 @@ function LandingView({ onStart }: { onStart: (data: any) => void }) {
             </div>
           </section>
 
-          {/* Right side: Form */}
-          <motion.div 
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.2 }}
-            className="relative"
-          >
-            <AstrologyForm onSubmit={onStart} />
-          </motion.div>
+          {/* Right side: Form & History */}
+            <div className="flex flex-col gap-6 w-full min-w-0">
+              <motion.div 
+                initial={{ y: 20, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ delay: 0.2 }}
+                className="relative"
+              >
+                <AstrologyForm onSubmit={onStart} />
+              </motion.div>
+
+              {user && historyList.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.3 }}
+                  className="bg-white rounded-[6px] p-4 md:p-5 border border-border shadow-2xl max-w-2xl mx-auto w-full flex flex-col gap-3 overflow-hidden min-w-0"
+                >
+                  <div className="flex items-center gap-2 text-primary font-bold text-[13px] uppercase tracking-wider mb-1 px-1">
+                    <Calendar className="w-4 h-4" /> Lịch sử lá số
+                  </div>
+                  <div className="flex gap-2.5 md:gap-3 overflow-x-auto invisible-scrollbar pb-2 snap-x px-1">
+                    {historyList.map(h => (
+                      <div 
+                        key={h.id} 
+                        onClick={() => onStart({
+                          name: h.name,
+                          gender: h.gender,
+                          solarDate: new Date(h.solarDateTimestamp),
+                          hour: h.hour,
+                          minute: h.minute,
+                          isLunar: h.isLunar,
+                          isLeap: h.isLeap
+                        }, true)}
+                        className="shrink-0 w-[165px] md:w-[180px] snap-center bg-secondary/50 rounded-[6px] p-3 border border-border/50 hover:bg-primary/5 hover:border-primary/30 transition-colors cursor-pointer text-left group"
+                      >
+                        <h4 className="font-bold text-sm text-foreground truncate group-hover:text-primary transition-colors">{h.name}</h4>
+                        <p className="text-[10px] md:text-[11px] text-muted-foreground mt-1">
+                          {new Date(h.solarDateTimestamp).toLocaleDateString('vi-VN')} • {h.hour}h{h.minute}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+            </div>
         </div>
       </div>
 
@@ -1060,7 +1443,7 @@ function LandingView({ onStart }: { onStart: (data: any) => void }) {
       </section>
 
       {/* NEW SECTION: FAQ (Accordion) */}
-      <section className="mt-16 md:mt-20 mb-8 md:mb-24 relative">
+      <section className="mt-16 md:mt-20 mb-0 relative">
         <div className="container mx-auto px-6 max-w-3xl">
            <div className="text-center space-y-3 mb-12">
               <h2 className="text-2xl md:text-3xl font-heading font-black text-[#7C3AED] tracking-tight uppercase">
@@ -1071,18 +1454,457 @@ function LandingView({ onStart }: { onStart: (data: any) => void }) {
               </p>
            </div>
 
-           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+           <div className="flex flex-col gap-4 max-w-2xl mx-auto">
               {[
                 { q: "Trò chuyện AI có tốn xu không?", a: "Hệ thống sử dụng xu để duy trì và phát triển AI chi phí cao. Tuy nhiên bạn có thể nhận xu miễn phí mỗi ngày qua các hoạt động trên hệ thống." },
                 { q: "Thông tin cá nhân của tôi có được bảo mật không?", a: "Tuyệt đối bảo mật. Dữ liệu của bạn được mã hóa và chỉ sử dụng cho mục đích lập lá số, không bao giờ chia sẻ cho bên thứ ba." },
                 { q: "Tôi có cần mua toàn bộ phần luận giải không?", a: "Không, bạn có toàn quyền lựa chọn mở khóa từng cung hoặc từng chủ đề mà bạn quan tâm nhất để tối ưu chi phí." },
                 { q: "Nên bắt đầu sử dụng thế nào nếu chưa biết nhiều về Tử Vi?", a: "Bạn chỉ cần nhập đúng ngày giờ sinh, AI sẽ tự động lập lá số và đưa ra các lời giải bằng ngôn ngữ hiện đại, dễ hiểu nhất cho bất kỳ ai." },
               ].map((item, idx) => (
-                <FAQItem key={idx} question={item.q} answer={item.a} />
+                <FAQItem 
+                  key={idx} 
+                  question={item.q} 
+                  answer={item.a} 
+                  isOpen={openFAQIndex === idx}
+                  onToggle={() => setOpenFAQIndex(openFAQIndex === idx ? null : idx)}
+                />
               ))}
            </div>
         </div>
       </section>
+    </motion.div>
+  );
+}
+
+function AdminDashboard({ onBack }: { onBack: () => void }) {
+  const [users, setUsers] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedUser, setSelectedUser] = useState<any>(null);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [editRank, setEditRank] = useState('');
+  const [editQuota, setEditQuota] = useState(2);
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  const notify = (message: string, type: 'error' | 'success' | 'info' = 'error') => {
+    window.dispatchEvent(new CustomEvent('app-notification', { 
+      detail: { message, type } 
+    }));
+  };
+
+  const fetchUsers = async () => {
+    setIsLoading(true);
+    try {
+      const { collection, getDocs, query, orderBy } = await import('firebase/firestore');
+      const q = query(collection(db, 'users'), orderBy('lastLoginAt', 'desc'));
+      const snapshot = await getDocs(q);
+      // Exclude admin from list
+      const usersData = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as any))
+        .filter(u => u.email !== ADMIN_EMAIL);
+      setUsers(usersData);
+    } catch (error) {
+      console.error("Error fetching users for admin:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const handleUpdateUserDetails = async () => {
+    if (!selectedUser) return;
+    setIsUpdating(true);
+    try {
+      const { doc, updateDoc } = await import('firebase/firestore');
+      await updateDoc(doc(db, 'users', selectedUser.uid), {
+        rank: editRank,
+        customQuotaLimit: Number(editQuota)
+      });
+      notify('Cập nhật thông tin thành công', 'success');
+      fetchUsers();
+      setIsDetailOpen(false);
+    } catch (error) {
+      console.error("Error updating user details:", error);
+      notify('Lỗi khi cập nhật thông tin');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleDeleteUser = async (userId: string) => {
+    if (!window.confirm('Bạn có chắc chắn muốn xóa người dùng này? Thao tác này không thể hoàn tác.')) return;
+    try {
+      const { doc, deleteDoc } = await import('firebase/firestore');
+      await deleteDoc(doc(db, 'users', userId));
+      notify('Đã xóa người dùng thành công', 'info');
+      fetchUsers();
+      setIsDetailOpen(false);
+    } catch (error) {
+      console.error("Error deleting user:", error);
+      notify('Lỗi khi xóa người dùng');
+    }
+  };
+
+  const handleResetQuota = async (userId: string) => {
+    if (!window.confirm('Đặt lại hạn mức (Quota) cho người dùng này?')) return;
+    try {
+      const { doc, updateDoc } = await import('firebase/firestore');
+      await updateDoc(doc(db, 'users', userId), {
+        interpretedChartIds: []
+      });
+      notify('Đã đặt lại hạn mức thành công', 'success');
+      fetchUsers();
+      if (selectedUser?.uid === userId) {
+        setSelectedUser({ ...selectedUser, interpretedChartIds: [] });
+      }
+    } catch (error) {
+      console.error("Error resetting quota:", error);
+      notify('Lỗi khi đặt lại hạn mức');
+    }
+  };
+
+  const filteredUsers = users.filter(u => 
+    (u.email?.toLowerCase().includes(searchTerm.toLowerCase())) ||
+    (u.displayName?.toLowerCase().includes(searchTerm.toLowerCase())) ||
+    (u.uid?.includes(searchTerm))
+  );
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="container mx-auto px-4 max-w-6xl py-8"
+    >
+      <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="sm" onClick={onBack} className="h-8 text-slate-500 hover:text-primary">
+            <ChevronLeft className="w-4 h-4 mr-1" /> Quay lại
+          </Button>
+          <h1 className="text-2xl font-black flex items-center gap-2 tracking-tight">
+            <Shield className="w-6 h-6 text-primary" /> QUẢN TRỊ HỆ THỐNG
+          </h1>
+        </div>
+        <div className="flex items-center gap-6">
+          <div className="text-right">
+            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Tổng Users</p>
+            <p className="text-xl font-black text-primary leading-none">{users.length}</p>
+          </div>
+          <Button onClick={fetchUsers} size="icon" variant="outline" className="rounded-xl h-10 w-10 border-border hover:bg-slate-50">
+            <Activity className={cn("w-5 h-5", isLoading ? "animate-spin text-primary" : "text-slate-400")} />
+          </Button>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-3xl border border-border shadow-xl overflow-hidden">
+        <div className="p-6 border-b border-border bg-secondary/10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="relative flex-1 max-w-md">
+            <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <input 
+              type="text" 
+              placeholder="Tìm kiếm Email, Tên hoặc UID..."
+              className="w-full pl-10 pr-4 py-2 bg-white border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all font-medium"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+          <div className="flex items-center gap-4 text-xs font-bold text-muted-foreground bg-white px-3 py-1.5 rounded-full border border-border/50">
+            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+            <span className="tracking-tight uppercase">Dữ liệu trực tiếp từ Firestore</span>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-secondary/5 border-b border-border">
+                <th className="px-6 py-4 text-[10px] font-black uppercase text-muted-foreground tracking-widest">Người dùng</th>
+                <th className="px-6 py-4 text-[10px] font-black uppercase text-muted-foreground tracking-widest">Email / Quyền</th>
+                <th className="px-6 py-4 text-[10px] font-black uppercase text-muted-foreground tracking-widest text-center">Hạn mức (Quota)</th>
+                <th className="px-6 py-4 text-[10px] font-black uppercase text-muted-foreground tracking-widest">Đăng nhập cuối</th>
+                <th className="px-6 py-4 text-[10px] font-black uppercase text-muted-foreground tracking-widest text-right">Quản lý</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/50">
+              {isLoading && users.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground">
+                    <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2 text-primary" />
+                    <p className="font-bold text-sm tracking-tight uppercase">Đang đồng bộ dữ liệu...</p>
+                  </td>
+                </tr>
+              ) : filteredUsers.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground font-medium">Không tìm thấy bản ghi nào khớp với nội dung tìm kiếm.</td>
+                </tr>
+              ) : (
+                filteredUsers.map((u) => (
+                  <tr key={u.id} className="hover:bg-slate-50/50 transition-colors group">
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="relative">
+                          {u.photoURL ? (
+                            <img src={u.photoURL} className="w-10 h-10 rounded-2xl border border-border object-cover" alt="" />
+                          ) : (
+                            <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center text-primary font-black text-sm border border-primary/20 capitalize">
+                              {u.displayName?.[0] || 'U'}
+                            </div>
+                          )}
+                          <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-white rounded-full flex items-center justify-center shadow-sm border border-border">
+                             <div className="w-2 h-2 rounded-full bg-green-500" />
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-sm font-black text-foreground leading-tight group-hover:text-primary transition-colors">{u.displayName || 'Khách danh tính'}</p>
+                          <p className="text-[10px] font-mono text-muted-foreground mt-1 opacity-60 tracking-tighter">ID: {u.uid}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <p className="text-sm font-bold text-foreground tracking-tight">{u.email}</p>
+                      <span className={cn(
+                        "inline-flex items-center px-2 py-0.5 mt-1 rounded-md text-[9px] font-black uppercase tracking-widest",
+                        u.rank ? "bg-emerald-100 text-emerald-600" : "bg-primary/10 text-primary"
+                      )}>
+                        {u.rank || 'Thành viên'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      <div className="inline-flex items-center gap-2 px-3 py-1 bg-slate-50 rounded-xl border border-border">
+                        <span className="text-sm font-black text-foreground">{u.interpretedChartIds?.length || 0}</span>
+                        <span className="text-[10px] font-bold text-muted-foreground opacity-60">/ {u.customQuotaLimit || 2} lá</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <p className="text-xs font-bold text-slate-500 flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5 opacity-60" />
+                        {u.lastLoginAt?.toDate?.() ? u.lastLoginAt.toDate().toLocaleString('vi-VN') : 'Mới khởi tạo'}
+                      </p>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          onClick={() => { 
+                            setSelectedUser(u); 
+                            setEditRank(u.rank || '');
+                            setEditQuota(u.customQuotaLimit || 2);
+                            setIsDetailOpen(true); 
+                          }}
+                          className="h-8 w-8 p-0 rounded-lg hover:bg-primary/10 hover:text-primary"
+                        >
+                          <Info className="w-4 h-4" />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          onClick={() => handleResetQuota(u.uid)}
+                          className="h-8 w-8 p-0 rounded-lg hover:bg-orange-100 hover:text-orange-600"
+                          title="Đặt lại hạn mức"
+                        >
+                          <Zap className="w-4 h-4" />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          onClick={() => handleDeleteUser(u.uid)}
+                          className="h-8 w-8 p-0 rounded-lg hover:bg-red-100 hover:text-red-600"
+                          title="Xóa người dùng"
+                          disabled={u.email === ADMIN_EMAIL}
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* User Info Dialog */}
+      <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
+        <DialogContent className="max-w-xl rounded-3xl p-0 overflow-hidden border-none shadow-2xl">
+          {selectedUser && (
+            <div className="flex flex-col">
+              <div className="bg-primary p-8 text-white relative">
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  onClick={() => setIsDetailOpen(false)}
+                  className="absolute top-4 right-4 text-white hover:bg-white/20 rounded-full"
+                >
+                  <X className="w-5 h-5" />
+                </Button>
+                <div className="flex flex-col items-center text-center">
+                  <div className="w-24 h-24 rounded-3xl bg-white/20 backdrop-blur-xl mb-4 flex items-center justify-center p-1 border border-white/20 overflow-hidden shadow-xl">
+                    {selectedUser.photoURL ? (
+                      <img src={selectedUser.photoURL} className="w-full h-full rounded-2xl object-cover shadow-inner" alt="" />
+                    ) : (
+                      <User className="w-12 h-12 text-white" />
+                    )}
+                  </div>
+                  <h2 className="text-2xl font-black uppercase tracking-tight leading-none mb-1">{selectedUser.displayName || 'User'}</h2>
+                  <p className="text-white/60 font-bold text-xs tracking-wider uppercase">{selectedUser.email}</p>
+                </div>
+              </div>
+
+              <div className="p-8 space-y-6 bg-white">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest pl-1">Cấp bậc</label>
+                    <input 
+                      type="text" 
+                      value={editRank} 
+                      onChange={(e) => setEditRank(e.target.value)}
+                      placeholder="Cấp bậc (VD: Premium)"
+                      className="w-full px-4 py-2.5 bg-secondary/30 border border-border/50 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest pl-1">Hạn mức AI</label>
+                    <input 
+                      type="number" 
+                      value={editQuota} 
+                      onChange={(e) => setEditQuota(Number(e.target.value))}
+                      className="w-full px-4 py-2.5 bg-secondary/30 border border-border/50 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h3 className="text-xs font-black uppercase text-foreground/40 tracking-widest flex items-center gap-2">
+                    <Handshake className="w-4 h-4" /> Thao tác quản trị viên
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button 
+                      onClick={handleUpdateUserDetails}
+                      disabled={isUpdating}
+                      className="bg-primary hover:bg-primary/90 text-white rounded-xl font-bold py-6"
+                    >
+                      {isUpdating ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Check className="w-4 h-4 mr-2" />}
+                      LƯU THAY ĐỔI
+                    </Button>
+                    <Button 
+                      onClick={() => handleResetQuota(selectedUser.uid)}
+                      className="bg-orange-600 hover:bg-orange-700 text-white rounded-xl font-bold py-6"
+                    >
+                      <Zap className="w-4 h-4 mr-2" /> RE-QUOTA
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button 
+                      variant="outline"
+                      className="rounded-xl font-bold py-6 text-slate-500 border-border hover:bg-slate-50"
+                      onClick={() => {
+                        alert(`Chi tiết ID: ${selectedUser.uid}\nCharts đã luận: ${JSON.stringify(selectedUser.interpretedChartIds || [], null, 2)}`);
+                      }}
+                    >
+                      <FileText className="w-4 h-4 mr-2" /> LOG JSON
+                    </Button>
+                    <Button 
+                      onClick={() => handleDeleteUser(selectedUser.uid)}
+                      variant="destructive"
+                      className="rounded-xl font-bold py-6"
+                    >
+                      <X className="w-4 h-4 mr-2" /> XÓA USER
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </motion.div>
+  );
+}
+
+function ProfileView({ user, userData, isAdmin, onAdminClick, onBack }: { user: FirebaseUser, userData: any, isAdmin: boolean, onAdminClick: () => void, onBack: () => void }) {
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10 }}
+      className="container mx-auto px-4 max-w-lg py-8 md:py-16"
+    >
+      <div className="flex items-center mb-6">
+        <Button variant="ghost" size="sm" onClick={onBack} className="text-muted-foreground hover:text-primary transition-colors h-8">
+          <ChevronLeft className="w-4 h-4 mr-1" /> Quay lại
+        </Button>
+      </div>
+
+      <div className="bg-white rounded-[32px] border border-border/50 shadow-2xl p-6 md:p-10 flex flex-col items-start">
+        <div className="flex flex-col md:flex-row items-center md:items-start gap-6 w-full mb-8">
+          <div className="relative shrink-0">
+            <div className="p-1 rounded-full bg-gradient-to-tr from-primary/20 via-blue-400/20 to-emerald-400/20">
+              {user.photoURL ? (
+                <img src={user.photoURL} alt={user.displayName || 'User'} className="w-24 h-24 md:w-32 md:h-32 rounded-full shadow-lg object-cover" />
+              ) : (
+                <div className="w-24 h-24 md:w-32 md:h-32 rounded-full bg-slate-50 flex items-center justify-center text-primary shadow-lg border border-border">
+                  <User className="w-12 h-12" />
+                </div>
+              )}
+            </div>
+            <div className="absolute bottom-2 right-2 w-5 h-5 bg-green-500 rounded-full border-4 border-white shadow-sm" title="Online Status"></div>
+          </div>
+          
+          <div className="text-center md:text-left flex-1 min-w-0">
+            <h1 className="text-2xl md:text-3xl font-heading font-black text-foreground tracking-tight uppercase truncate">{user.displayName || 'Người dùng'}</h1>
+            <p className="text-[11px] text-muted-foreground font-semibold flex items-center justify-center md:justify-start gap-1.5 uppercase tracking-widest opacity-80 mt-1">
+              <Shield className="w-3.5 h-3.5 text-green-500" /> Tài khoản đã xác thực
+            </p>
+            {isAdmin && (
+              <Button 
+                onClick={onAdminClick}
+                className="mt-4 bg-primary text-white hover:bg-primary/90 font-bold text-[10px] h-8 px-4 rounded-full shadow-md uppercase tracking-widest whitespace-nowrap"
+              >
+                <Shield className="w-3 h-3 mr-2" /> Quản trị hệ thống
+              </Button>
+            )}
+          </div>
+        </div>
+        
+        <div className="w-full space-y-6">
+           <div className="flex flex-col items-start gap-1.5 relative w-full">
+              <span className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-[0.14em]">Cấp bậc</span>
+              <div className="text-sm md:text-base font-bold text-primary flex items-center gap-2">
+                <Star className="w-4 h-4 fill-primary" /> {isAdmin ? "Quản trị viên" : (userData?.rank || "Thành viên Miễn phí")}
+              </div>
+              <div className="w-full h-px bg-slate-100 mt-2" />
+           </div>
+
+           <div className="flex flex-col items-start gap-1.5 relative w-full">
+              <span className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-[0.14em]">Hạn mức AI</span>
+              <span className="text-sm md:text-base font-bold text-slate-700">
+                {isAdmin ? "Vô hạn (Admin)" : `${(userData?.interpretedChartIds?.length || 0)} / ${userData?.customQuotaLimit || 2} lá số đã xem`}
+              </span>
+              <div className="w-full h-px bg-slate-100 mt-2" />
+           </div>
+
+           <div className="flex flex-col items-start gap-1.5 relative w-full">
+              <span className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-[0.14em]">Địa chỉ Email</span>
+              <span className="text-sm font-semibold text-slate-700 break-all w-full">{user.email}</span>
+              <div className="w-full h-px bg-slate-100 mt-2" />
+           </div>
+
+           <div className="flex flex-col items-start gap-1.5 relative w-full">
+              <span className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-[0.14em]">Mã định danh (UID)</span>
+              <span className="text-[10px] font-mono text-muted-foreground/50 break-all select-all font-medium">{user.uid}</span>
+              <div className="w-full h-px bg-slate-100 mt-2" />
+           </div>
+
+           <div className="flex flex-col items-start gap-1 relative w-full pt-1">
+              <span className="text-[9px] font-bold text-muted-foreground/60 uppercase tracking-[0.14em]">Lượt luận giải</span>
+              <span className="text-sm md:text-base font-black text-[#FF4D00] uppercase tracking-normal">Không giới hạn</span>
+           </div>
+        </div>
+      </div>
     </motion.div>
   );
 }
@@ -1126,7 +1948,7 @@ function ResultView({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="container mx-auto px-4 md:px-4 max-w-5xl pt-0 md:pt-2"
+      className="container mx-auto px-2 md:px-6 max-w-[1400px] pt-2 md:pt-4"
     >
       <div className="flex flex-col gap-4 md:gap-6" id="result-view-container">
         
@@ -1139,8 +1961,11 @@ function ResultView({
                  </Button>
               </div>
            </div>
+        </div>
 
-           <div className="w-full border-b border-border overflow-x-auto invisible-scrollbar flex items-center justify-between gap-4">
+        <div className="flex flex-col xl:flex-row gap-6 xl:gap-8 items-start">
+          <div className="w-full xl:w-[45%] shrink-0 flex flex-col gap-4 sticky top-20">
+            <div className="w-full border-b border-border overflow-x-auto invisible-scrollbar flex items-center justify-between gap-4">
               <div className="flex">
                 <div className="px-4 py-1.5 text-[12px] font-black text-primary border-b-2 border-primary whitespace-nowrap uppercase">
                   Lá số chi tiết
@@ -1167,12 +1992,9 @@ function ResultView({
                    PDF
                 </Button>
               </div>
-           </div>
-        </div>
+            </div>
 
-        <div className="space-y-8">
-          <div className="w-full">
-            <div className="bg-white rounded-[24px] border-none md:border md:border-border shadow-none md:shadow-lg p-3 md:p-3 overflow-hidden flex flex-col items-center">
+            <div className="bg-white rounded-[24px] border-none md:border md:border-border shadow-none md:shadow-lg p-2 md:p-3 overflow-hidden flex flex-col items-center">
                <AstrologyChart 
                  palaces={chartData.palaces}
                  menhIdx={chartData.menhIdx}
@@ -1201,20 +2023,25 @@ function ResultView({
                  onPalaceClick={(idx: number) => {
                    const palaceName = chartData.palaces[idx].name;
                    if (!expandedPalaces[palaceName]) togglePalace(palaceName);
-                   document.getElementById(`palace-card-${palaceName}`)?.scrollIntoView({ behavior: 'smooth' });
+                   const el = document.getElementById(`palace-card-${palaceName}`);
+                   if (el) {
+                     const yOffset = -100;
+                     const y = el.getBoundingClientRect().top + window.pageYOffset + yOffset;
+                     window.scrollTo({top: y, behavior: 'smooth'});
+                   }
                  }}
                />
             </div>
           </div>
 
-          <div className="px-0 md:px-0">
-            <div id="ai-section" className="space-y-4 md:space-y-6 mt-4 md:mt-6 pb-10 md:pb-20">
-                <div className="flex flex-col items-center text-center space-y-1 max-w-xl mx-auto mb-3 md:mb-6">
+          <div className="w-full xl:w-[55%] px-0 md:px-0">
+            <div id="ai-section" className="space-y-4 md:space-y-6 mt-0 pb-10 md:pb-20">
+                <div className="flex flex-col items-center xl:items-start text-center xl:text-left space-y-2 mb-6">
                    <div className="px-2 py-0.5 bg-primary/10 text-primary text-[9px] font-black rounded-full border border-primary/20 uppercase tracking-[0.2em]">
                       CHIÊM CÁT VẬN MỆNH
                    </div>
-                   <h2 className="text-[17px] md:text-xl font-heading font-black text-foreground uppercase tracking-tight">Thánh Nhân Giải Mã</h2>
-                   <p className="text-muted-foreground text-[11px] md:text-sm max-w-xs leading-tight">
+                   <h2 className="text-[18px] md:text-xl font-heading font-black text-foreground uppercase tracking-tight">Thánh Nhân Giải Mã</h2>
+                   <p className="text-muted-foreground text-[12px] md:text-sm max-w-md leading-tight">
                       Luận giải chi tiết 12 cung số từ trí tuệ nhân tạo.
                    </p>
                    <Button 
@@ -1222,10 +2049,10 @@ function ResultView({
                      variant="outline"
                      size="sm"
                      disabled={isGenerating}
-                     className="mt-3 md:mt-4 h-8 md:h-10 border-primary/30 text-primary hover:bg-primary/5 rounded-full text-[10px] md:text-xs font-black px-6 shadow-sm"
+                     title="Giải mã trọn bộ 12 cung"
+                     className="mt-4 h-10 w-10 border-primary/30 text-primary hover:bg-primary/5 rounded-full p-0 shadow-sm flex items-center justify-center group transition-all duration-300 hover:scale-110"
                    >
-                     {isGenerating ? <Loader2 className="w-3 h-3 animate-spin mr-2" /> : <Sparkles className="w-3 h-3 mr-2 text-yellow-500" />}
-                     GIẢI MÃ TRỌN BỘ 12 CUNG
+                     {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-5 h-5 text-yellow-500 group-hover:rotate-12 transition-transform" />}
                    </Button>
                 </div>
 
@@ -1256,7 +2083,7 @@ function ResultView({
                                  Cung {pName} {isThanPalace && '+ Thân'}
                               </h3>
                               
-                              {!interpretation && (
+                              {!interpretation ? (
                                  <Button 
                                    onClick={() => { setActiveTab(pName); onGenerate(pName); if (!isExpanded) togglePalace(pName); }}
                                    disabled={isGenerating}
@@ -1265,6 +2092,14 @@ function ResultView({
                                  >
                                     {isGeneratingCurrent && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                                     LUẬN GIẢI
+                                 </Button>
+                              ) : (
+                                 <Button 
+                                   onClick={() => togglePalace(pName)}
+                                   size="sm"
+                                   className="h-8 px-4 bg-primary/10 text-primary hover:bg-primary/20 rounded-lg text-[11px] font-black flex items-center gap-1 transition-all shrink-0 border border-primary/20"
+                                 >
+                                    {isExpanded ? 'THU GỌN' : (isGeneratingCurrent ? 'ĐANG TẢI...' : 'XEM KẾT QUẢ')}
                                  </Button>
                               )}
                            </div>
@@ -1291,15 +2126,15 @@ function ResultView({
                                                 <span>AI đang thấu suốt bí mật tại cung {pName}...</span>
                                              </div>
                                            ) : (
-                                             <div className="prose prose-purple prose-sm max-w-none 
-                                             prose-headings:text-slate-900 prose-headings:tracking-tighter prose-headings:mt-14 prose-headings:mb-6 prose-headings:pb-3 prose-headings:border-b
-                                             prose-h2:text-[18px] prose-h2:font-bold prose-h2:uppercase prose-h2:tracking-wider prose-h2:text-slate-900 prose-h2:font-sans
-                                             prose-p:text-[14px] md:prose-p:text-[15px] prose-p:leading-[1.8] prose-p:tracking-normal prose-p:text-slate-600 prose-p:mb-5 prose-p:text-justify font-sans
+                                             <div className="prose prose-purple max-w-none 
+                                             prose-headings:text-slate-900 prose-headings:tracking-tighter prose-headings:mt-12 md:prose-headings:mt-14 prose-headings:mb-5 md:prose-headings:mb-6 prose-headings:pb-2 md:prose-headings:pb-3 prose-headings:border-b
+                                             prose-h2:text-[16px] md:prose-h2:text-[18px] lg:prose-h2:text-[20px] prose-h2:font-bold prose-h2:uppercase prose-h2:tracking-wider prose-h2:text-slate-900 
+                                             prose-p:text-[13px] md:prose-p:text-[15px] lg:prose-p:text-[16px] prose-p:leading-[1.7] md:prose-p:leading-[1.8] prose-p:tracking-normal prose-p:text-slate-600 prose-p:mb-4 md:prose-p:mb-5 prose-p:text-justify font-sans
                                              prose-strong:font-bold 
-                                             prose-ul:my-5 prose-ul:list-disc prose-ul:pl-8
-                                             prose-li:my-2 prose-li:text-[14px] md:prose-li:text-[15px] prose-li:text-slate-600
-                                             prose-blockquote:border-l-4 prose-blockquote:border-primary/40 prose-blockquote:pl-6 prose-blockquote:not-italic prose-blockquote:text-muted-foreground
-                                             selection:bg-primary/20 text-[14px] md:text-[15px]">
+                                             prose-ul:my-4 md:prose-ul:my-5 prose-ul:list-disc prose-ul:pl-6 md:prose-ul:pl-8
+                                             prose-li:my-1.5 md:prose-li:my-2 prose-li:text-[13px] md:prose-li:text-[15px] lg:prose-li:text-[16px] prose-li:text-slate-600
+                                             prose-blockquote:border-l-4 prose-blockquote:border-primary/40 prose-blockquote:pl-5 md:prose-blockquote:pl-6 prose-blockquote:not-italic prose-blockquote:text-muted-foreground
+                                             selection:bg-primary/20 text-[13px] md:text-[15px]">
                                                 <Markdown 
                                                   remarkPlugins={[remarkGfm]}
                                                   components={{

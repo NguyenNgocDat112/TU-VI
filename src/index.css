@@ -157,6 +157,14 @@
   background: var(--primary);
 }
 
+.invisible-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.invisible-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
 .tuvi-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

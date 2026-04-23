@@ -287,50 +287,48 @@ export function AstrologyChart({
   ];
 
   const InfoRow = ({ label, value, subValue }: { label: string, value: string, subValue?: string }) => (
-    <div className="flex items-center gap-1.5 py-0.5 border-b border-border/40 last:border-0 w-full text-left leading-tight">
-      <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider w-[70px] shrink-0">{label}</span>
+    <div className="flex items-center gap-1.5 py-1 border-b border-border/40 last:border-0 w-full text-left leading-tight">
+      <span className="text-[12px] font-bold text-muted-foreground uppercase tracking-wider w-[80px] shrink-0">{label}</span>
       <div className="flex flex-col items-start flex-1 min-w-0">
         <div className="flex items-center gap-1.5 w-full">
-          <span className="text-[12px] font-bold text-foreground tracking-tight whitespace-nowrap overflow-hidden text-ellipsis">{value}</span>
+          <span className="text-[14px] font-bold text-foreground tracking-tight whitespace-nowrap overflow-hidden text-ellipsis">{value}</span>
           {subValue && !subValue.includes('Bản mệnh') && (
-            <span className="text-[10px] font-semibold text-blue-600"> ({subValue})</span>
+            <span className="text-[12px] font-semibold text-blue-600"> ({subValue})</span>
           )}
         </div>
         {subValue && subValue.includes('Bản mệnh') && (
-          <span className="text-[9px] font-semibold text-primary italic leading-none mt-0.5">{subValue}</span>
+          <span className="text-[11px] font-semibold text-primary italic leading-none mt-0.5">{subValue}</span>
         )}
       </div>
     </div>
   );
 
   return (
-    <div ref={containerRef} className="w-full relative overflow-hidden group/chart-container">
-      {/* Invisible overlay for long-press saving on mobile */}
-      {previewImage && !isExporting && (
-        <img 
-          src={previewImage} 
-          alt="Lá số Tử Vi" 
-          className="absolute top-0 z-[60] opacity-0 select-none pointer-events-auto"
+    <div className="flex flex-col items-center w-full">
+      <div ref={containerRef} className="w-full relative overflow-hidden group/chart-container">
+        {/* Invisible overlay for long-press saving on mobile */}
+        {previewImage && !isExporting && (
+          <img 
+            src={previewImage} 
+            alt="Lá số Tử Vi" 
+            className="absolute top-0 z-[60] opacity-0 select-none pointer-events-auto w-full h-full cursor-pointer"
+            style={{ 
+              objectFit: 'contain',
+              objectPosition: 'top center'
+            }}
+          />
+        )}
+
+        <div 
+          ref={chartRef} 
+          className={cn("bg-white absolute top-0 overflow-visible", isExporting && "shadow-none border-none relative")}
           style={{ 
-            width: '800px',
-            height: 'auto',
+            width: '800px', 
             transform: `scale(${scale})`,
             transformOrigin: 'top left',
             left: `calc(50% - ${400 * scale}px)`
           }}
-        />
-      )}
-
-      <div 
-        ref={chartRef} 
-        className={cn("bg-white absolute top-0 overflow-visible", isExporting && "shadow-none border-none relative")}
-        style={{ 
-          width: '800px', 
-          transform: `scale(${scale})`,
-          transformOrigin: 'top left',
-          left: `calc(50% - ${400 * scale}px)`
-        }}
-      >
+        >
         <div className="w-full p-2 bg-white">
           <div className="tuvi-grid border border-border relative bg-slate-50 mx-auto shadow-inner">
             {gridMap.map((idx, i) => {
@@ -345,12 +343,12 @@ export function AstrologyChart({
                       </div>
 
                       <div className="relative z-10 w-full flex flex-col items-center">
-                        <div className="text-center mb-4">
-                          <h2 className="text-[16px] font-heading font-black text-primary tracking-widest mb-0.5 drop-shadow-md uppercase">LÁ SỐ TỬ VI</h2>
-                          <div className="h-0.5 w-16 bg-gradient-to-r from-transparent via-primary to-transparent mx-auto" />
+                        <div className="text-center mb-5">
+                          <h2 className="text-[20px] font-heading font-black text-primary tracking-widest mb-1 drop-shadow-md uppercase">LÁ SỐ TỬ VI</h2>
+                          <div className="h-0.5 w-20 bg-gradient-to-r from-transparent via-primary to-transparent mx-auto" />
                         </div>
 
-                        <div className="grid grid-cols-1 w-full max-w-[300px] gap-y-0.5 bg-slate-50/50 rounded-xl p-3 shadow-lg border border-border">
+                        <div className="grid grid-cols-1 w-full max-w-[320px] gap-y-0.5 bg-slate-50/50 rounded-xl p-3 shadow-lg border border-border">
                           <InfoRow label="Họ tên" value={birthInfo.name} />
                           <InfoRow label="Ngày sinh" value={`${solar.day}/${solar.month}/${solar.year} (DL)`} />
                           <InfoRow label="Âm lịch" value={`${lunar.day}/${lunar.month}/${lunar.year}`} subValue={stemBranchYear} />
@@ -365,8 +363,8 @@ export function AstrologyChart({
                           <InfoRow label="Tuổi/Vận" value={`${currentAge} tuổi`} subValue={currentDecadal} />
                         </div>
                         
-                        <div className="mt-4 flex flex-col items-center">
-                          <div className="text-[9px] font-black uppercase tracking-[0.3em] text-muted-foreground opacity-60">Tử Vi Chiêm Cát</div>
+                        <div className="mt-5 flex flex-col items-center">
+                          <div className="text-[11px] font-black uppercase tracking-[0.3em] text-muted-foreground opacity-60">Tử Vi Chiêm Cát</div>
                         </div>
                       </div>
                     </div>
@@ -506,6 +504,11 @@ export function AstrologyChart({
           </div>
         </div>
       </div>
+      <div className="md:hidden mt-2 text-[10px] font-bold text-muted-foreground/60 italic flex items-center gap-1.5 px-4 text-center">
+        <Sparkles className="w-3 h-3 text-primary animate-pulse" />
+        Mẹo: Nhấn giữ vào lá số để lưu ảnh về điện thoại
+      </div>
+    </div>
     </div>
   );
 }

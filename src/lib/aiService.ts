@@ -10,10 +10,10 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 /**
  * Dispatch a custom event for the UI to show notifications
  */
-function notifyUser(message: string) {
+export function notifyUser(message: string, type: 'error' | 'info' = 'error') {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('app-notification', { 
-      detail: { message, type: 'error' } 
+      detail: { message, type } 
     }));
   }
 }
@@ -36,10 +36,10 @@ async function callOpenRouter(prompt: string, attempt = 0): Promise<string> {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
         'HTTP-Referer': 'https://ais-dev-y6l5t2btwrj4vneapcgeym-486939816062.asia-east1.run.app',
-        'X-Title': 'SOMENH.AI',
+        'X-Title': 'SOMENH.AI'
       },
       body: JSON.stringify({
-        model: 'google/gemma-3-27b-it:free', // Using standard OpenRouter model identifier
+        model: 'google/gemini-2.0-flash-001', // Using reliable free model
         messages: [
           { role: 'user', content: prompt }
         ],
@@ -58,14 +58,19 @@ async function callOpenRouter(prompt: string, attempt = 0): Promise<string> {
         return callOpenRouter(prompt, attempt + 1);
       }
       
-      throw new Error(`OpenRouter error: ${message}`);
+      throw new Error(`OpenRouter Error (${response.status}): ${message}`);
     }
 
     const data = await response.json();
-    return data.choices[0].message.content;
+    if (!data || !data.choices || data.choices.length === 0) {
+      throw new Error('Empty response from OpenRouter');
+    }
+    
+    return data.choices[0].message?.content || '';
   } catch (error: any) {
-    if (attempt < MAX_RETRIES && (error.message?.includes('fetch') || error.name === 'TypeError')) {
-      const delay = Math.pow(2, attempt) * 1000;
+    const errorMsg = error.message || '';
+    if (attempt < MAX_RETRIES && (errorMsg.includes('fetch') || errorMsg.includes('429') || error.name === 'TypeError')) {
+      const delay = Math.pow(2, attempt) * 1000 + Math.random() * 500;
       await sleep(delay);
       return callOpenRouter(prompt, attempt + 1);
     }
@@ -75,41 +80,45 @@ async function callOpenRouter(prompt: string, attempt = 0): Promise<string> {
 
 export async function getAICompletion(prompt: string, attempt = 0): Promise<string> {
   const geminiKey = process.env.GEMINI_API_KEY;
-  
+  const metaEnv = (import.meta as any).env;
+  const openRouterKey = (metaEnv?.VITE_OPENROUTER_API_KEY) || 
+                        (process.env.VITE_OPENROUTER_API_KEY) || 
+                        (process.env.OPENROUTER_API_KEY);
+
+  // Ưu tiên Gemini API trực tiếp (thường ổn định hơn trong môi trường này)
   if (geminiKey) {
     try {
+      if (attempt === 0) notifyUser('Đang truy vấn bằng Gemini API...', 'info');
       const ai = new GoogleGenAI({ apiKey: geminiKey });
       const response = await ai.models.generateContent({ 
         model: 'gemini-3-flash-preview',
         contents: [{ role: 'user', parts: [{ text: prompt }] }]
       });
-      
       return response.text ?? '';
-    } catch (error: any) {
-      console.error('Gemini API Error details:', error);
-      const errorMsg = error.message || '';
-      const isRateLimit = errorMsg.includes('429') || errorMsg.includes('RESOURCES_EXHAUSTED') || errorMsg.includes('quota');
+    } catch (geminiError: any) {
+      console.warn('Gemini API failed, attempting OpenRouter fallback...', geminiError);
       
-      // If it's a rate limit and we haven't exhausted retries, try again with backoff
-      if (isRateLimit && attempt < MAX_RETRIES) {
-        const delay = Math.pow(2, attempt) * 1000 + Math.random() * 500;
-        console.warn(`Gemini rate limited, retrying in ${Math.round(delay)}ms...`);
-        await sleep(delay);
-        return getAICompletion(prompt, attempt + 1);
-      }
-
-      // If still failing after retries or not a rate limit, fallback to OpenRouter
-      console.warn('Gemini API failed permanently or not a retryable error, attempting OpenRouter fallback...', error);
-      
-      try {
-        return await callOpenRouter(prompt);
-      } catch (orError: any) {
-        // notifyUser handles showing the alert
-        throw orError;
+      if (openRouterKey) {
+        try {
+          notifyUser('Gemini quá tải, đang chuyển sang OpenRouter dự phòng...', 'info');
+          return await callOpenRouter(prompt);
+        } catch (orError: any) {
+          console.error('OpenRouter Fallback Error:', orError);
+          throw geminiError; // Ném lỗi gốc nếu cả hai đều thất bại
+        }
+      } else {
+        throw geminiError;
       }
     }
-  } else {
-    console.warn('GEMINI_API_KEY is missing in process.env, trying OpenRouter fallback...');
-    return callOpenRouter(prompt);
+  } else if (openRouterKey) {
+    // Nếu không có Gemini, dùng OpenRouter làm chính
+    try {
+      if (attempt === 0) notifyUser('Đang truy vấn bằng OpenRouter API...', 'info');
+      return await callOpenRouter(prompt);
+    } catch (error: any) {
+      throw error;
+    }
   }
+  
+  throw new Error('Không có cấu hình API Key nào (Gemini hoặc OpenRouter) khả dụng.');
 }
