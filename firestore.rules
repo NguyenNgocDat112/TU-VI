@@ -33,7 +33,9 @@ service cloud.firestore {
         && (!data.keys().hasAny(['lastLoginAt']) || data.lastLoginAt is timestamp)
         && (!data.keys().hasAny(['interpretedChartIds']) || (data.interpretedChartIds is list && data.interpretedChartIds.size() <= 200))
         && (!data.keys().hasAny(['rank']) || isString(data.rank, 50))
-        && (!data.keys().hasAny(['customQuotaLimit']) || isNumber(data.customQuotaLimit));
+        && (!data.keys().hasAny(['customQuotaLimit']) || isNumber(data.customQuotaLimit))
+        && (!data.keys().hasAny(['isOnline']) || isBool(data.isOnline))
+        && (!data.keys().hasAny(['lastActiveAt']) || data.lastActiveAt is timestamp);
     }
 
     function isValidHistory(data) {

@@ -245,6 +245,59 @@ export default function App() {
     return () => window.removeEventListener('app-notification', handleNotification as EventListener);
   }, []);
 
+  // Presence Tracker
+  useEffect(() => {
+    let updateInterval: NodeJS.Timeout;
+    
+    const updatePresence = async (isOnline: boolean) => {
+      if (!user) return;
+      try {
+        const { doc, updateDoc, serverTimestamp } = await import('firebase/firestore');
+        await updateDoc(doc(db, 'users', user.uid), {
+          isOnline,
+          lastActiveAt: serverTimestamp()
+        });
+      } catch (e) {
+        // Ignore silently to avoid console spam if offline
+      }
+    };
+
+    if (user) {
+      updatePresence(true);
+      updateInterval = setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          updatePresence(true);
+        }
+      }, 60000); // 1 minute heartbeat
+    }
+    
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        updatePresence(true);
+      } else {
+        updatePresence(false);
+      }
+    };
+    
+    const handleBeforeUnload = () => {
+      if (user) {
+        updatePresence(false);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      if (user) {
+        updatePresence(false);
+      }
+      if (updateInterval) clearInterval(updateInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [user]);
+
   // History state
   const [historyList, setHistoryList] = useState<any[]>([]);
 
@@ -1535,24 +1588,6 @@ function AdminDashboard({ onBack }: { onBack: () => void }) {
     }
   };
 
-  const fetchUsers = async () => {
-    setIsLoading(true);
-    try {
-      const { collection, getDocs, query, orderBy } = await import('firebase/firestore');
-      const q = query(collection(db, 'users'), orderBy('lastLoginAt', 'desc'));
-      const snapshot = await getDocs(q);
-      // Exclude admin from list
-      const usersData = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as any))
-        .filter(u => u.email !== ADMIN_EMAIL);
-      setUsers(usersData);
-    } catch (error) {
-      console.error("Error fetching users for admin:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const fetchAlerts = async () => {
     setIsAlertsLoading(true);
     try {
@@ -1569,8 +1604,34 @@ function AdminDashboard({ onBack }: { onBack: () => void }) {
   };
 
   useEffect(() => {
-    if (activeTab === 'users') fetchUsers();
-    else if (activeTab === 'alerts') fetchAlerts();
+    let unsubscribeUsers: (() => void) | undefined;
+    if (activeTab === 'users') {
+      setIsLoading(true);
+      const setupRealtimeUsers = async () => {
+        try {
+          const { collection, query, orderBy, onSnapshot } = await import('firebase/firestore');
+          const q = query(collection(db, 'users'), orderBy('lastLoginAt', 'desc'));
+          unsubscribeUsers = onSnapshot(q, (snapshot) => {
+            const usersData = snapshot.docs
+              .map(doc => ({ id: doc.id, ...doc.data() } as any))
+              .filter(u => u.email !== ADMIN_EMAIL);
+            setUsers(usersData);
+            setIsLoading(false);
+          }, (err) => {
+            console.error("Lỗi onSnapshot users:", err);
+            setIsLoading(false);
+          });
+        } catch (err) {
+          console.error(err);
+        }
+      };
+      setupRealtimeUsers();
+    } else if (activeTab === 'alerts') {
+      fetchAlerts();
+    }
+    return () => {
+      if (unsubscribeUsers) unsubscribeUsers();
+    }
   }, [activeTab]);
 
   const handleUpdateUserDetails = async () => {
@@ -1583,7 +1644,6 @@ function AdminDashboard({ onBack }: { onBack: () => void }) {
         customQuotaLimit: Number(editQuota)
       });
       notify('Cập nhật thông tin thành công', 'success');
-      fetchUsers();
       setIsDetailOpen(false);
     } catch (error) {
       console.error("Error updating user details:", error);
@@ -1599,7 +1659,6 @@ function AdminDashboard({ onBack }: { onBack: () => void }) {
       const { doc, deleteDoc } = await import('firebase/firestore');
       await deleteDoc(doc(db, 'users', userId));
       notify('Đã xóa người dùng thành công', 'info');
-      fetchUsers();
       setIsDetailOpen(false);
     } catch (error) {
       console.error("Error deleting user:", error);
@@ -1615,7 +1674,6 @@ function AdminDashboard({ onBack }: { onBack: () => void }) {
         interpretedChartIds: []
       });
       notify('Đã đặt lại hạn mức thành công', 'success');
-      fetchUsers();
       if (selectedUser?.uid === userId) {
         setSelectedUser({ ...selectedUser, interpretedChartIds: [] });
       }
@@ -1677,8 +1735,8 @@ function AdminDashboard({ onBack }: { onBack: () => void }) {
             <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Tổng Users</p>
             <p className="text-xl font-black text-primary leading-none">{users.length}</p>
           </div>
-          <Button onClick={() => activeTab === 'users' ? fetchUsers() : fetchAlerts()} size="icon" variant="outline" className="rounded-xl h-10 w-10 border-border hover:bg-slate-50">
-            <Activity className={cn("w-5 h-5", (activeTab === 'users' ? isLoading : isAlertsLoading) ? "animate-spin text-primary" : "text-slate-400")} />
+          <Button onClick={() => activeTab === 'alerts' ? fetchAlerts() : null} size="icon" variant="outline" className="rounded-xl h-10 w-10 border-border hover:bg-slate-50">
+            <Activity className={cn("w-5 h-5", isAlertsLoading ? "animate-spin text-primary" : "text-slate-400")} />
           </Button>
         </div>
       </div>
@@ -1795,7 +1853,9 @@ function AdminDashboard({ onBack }: { onBack: () => void }) {
                   <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground font-medium">Không tìm thấy bản ghi nào khớp với nội dung tìm kiếm.</td>
                 </tr>
               ) : (
-                paginatedUsers.map((u) => (
+                paginatedUsers.map((u) => {
+                  const isOnlineNow = u.isOnline && u.lastActiveAt && (Date.now() - u.lastActiveAt.toMillis() < 5 * 60 * 1000);
+                  return (
                   <tr key={u.id} className="hover:bg-slate-50/50 transition-colors group">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
@@ -1807,8 +1867,8 @@ function AdminDashboard({ onBack }: { onBack: () => void }) {
                               {u.displayName?.[0] || 'U'}
                             </div>
                           )}
-                          <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-white rounded-full flex items-center justify-center shadow-sm border border-border">
-                             <div className="w-2 h-2 rounded-full bg-green-500" />
+                          <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-white rounded-full flex items-center justify-center shadow-sm border border-border" title={isOnlineNow ? "Đang Online (Trực tuyến)" : "Offline"}>
+                             <div className={cn("w-2 h-2 rounded-full", isOnlineNow ? "bg-green-500 animate-pulse" : "bg-slate-300")} />
                           </div>
                         </div>
                         <div>
@@ -1875,7 +1935,8 @@ function AdminDashboard({ onBack }: { onBack: () => void }) {
                       </div>
                     </td>
                   </tr>
-                ))
+                );
+                })
               )}
             </tbody>
           </table>
